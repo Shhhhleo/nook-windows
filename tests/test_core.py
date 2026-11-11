@@ -10,6 +10,7 @@ os.environ['NOOK_DATA_DIR'] = temporary.name
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
 from nook.storage import Store, protect
 from nook.services import search_files
 from nook.ui import Notch, Settings
@@ -56,6 +57,14 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(notch.target_geometry().top(), bounds.top())
         self.assertLessEqual(abs(notch.target_geometry().center().x() - bounds.center().x()), 1)
         notch.expand(True)
+        self.assertEqual(notch.height(), min(210, bounds.height() - 40))
+        notch.media_state = {'source': 'Spotify', 'title': 'Paused song', 'playing': False}
+        notch.update_clock()
+        self.assertEqual(notch.compact.text(), 'Paused song')
+        self.assertFalse(notch.media_buttons['play'].icon().isNull())
+        self.assertEqual(notch.media_buttons['play'].text(), '')
+        notch.switch_view('Widgets')
+        self.assertFalse(notch.compact.isHidden())
         self.assertEqual(notch.height(), min(store.settings['height'], bounds.height() - 40))
         notch.todo_input.setText('Added through UI handler')
         notch.add_todo()
@@ -68,6 +77,23 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(settings.tabs.count(), 4)
         notch.expand(False)
         self.assertEqual(notch.height(), 38)
+        store.settings['animation'] = True
+        notch.switch_view('Music')
+        notch.expand(True)
+        self.assertEqual(notch.animation.duration(), 150)
+        self.assertFalse(notch.body.isHidden())
+        QTest.qWait(40)
+        notch.expand(False)
+        self.assertEqual(notch.animation.duration(), 120)
+        QTest.qWait(40)
+        notch.expand(True)
+        QTest.qWait(200)
+        self.assertEqual(notch.geometry(), notch.target_geometry())
+        self.assertFalse(notch.body.isHidden())
+        notch.expand(False)
+        QTest.qWait(180)
+        self.assertEqual(notch.geometry(), notch.target_geometry())
+        self.assertTrue(notch.body.isHidden())
         notch.pool.waitForDone(10000)
         notch.tray.hide()
         notch.deleteLater()

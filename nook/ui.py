@@ -2,15 +2,17 @@ import json
 import os
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QThreadPool, QUrl
+from PySide6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QThreadPool, QUrl, QSize
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QFont, QPixmap, QIcon, QDesktopServices, QCursor, QShortcut, QKeySequence
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QScrollArea, QFrame, QTabWidget, QListWidget, QListWidgetItem, QCheckBox,
     QSpinBox, QComboBox, QFormLayout, QFileDialog, QColorDialog, QFontComboBox,
-    QSystemTrayIcon, QMenu, QMessageBox, QAbstractItemView, QGridLayout)
+    QSystemTrayIcon, QMenu, QMessageBox, QAbstractItemView, QGridLayout, QSlider, QLayout)
+from .visuals import media_icon, AlbumArt, TrackLabel
 from . import services
 from .storage import WIDGETS
 
@@ -22,7 +24,13 @@ QLabel { background: transparent; }
 QLabel#muted { color: #9999a5; }
 QLabel#title { font-size: 27px; font-weight: 600; }
 QLabel#section { font-size: 15px; font-weight: 600; }
-QFrame#card { background: #141417; border: 1px solid #252529; border-radius: 18px; }
+QFrame#card { background: #080808; border: 0; border-radius: 12px; }
+QPushButton#mediaControl { background: transparent; border: 0; border-radius: 8px; padding: 0; }
+QPushButton#mediaControl:hover { background: #202022; }
+QPushButton#mediaControl:focus { border: 1px solid #888; }
+QSlider::groove:horizontal { height: 4px; background: #333336; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #dedee2; border-radius: 2px; }
+QSlider::handle:horizontal { width: 8px; margin: -2px 0; background: #eee; border-radius: 4px; }
 QPushButton { background: #25252c; border: 1px solid #36363f; border-radius: 10px; padding: 8px 12px; }
 QPushButton:hover { background: #393943; }
 QPushButton:focus { border: 1px solid #b7b0ff; }
@@ -104,7 +112,7 @@ class Settings(QWidget):
         self.status = label('', 'muted', True)
         root.addWidget(self.status)
         footer = QHBoxLayout()
-        footer.addWidget(button('Preview notch', lambda: notch.expand(True)))
+        footer.addWidget(button('Preview notch', notch.preview))
         footer.addStretch()
         footer.addWidget(button('Save settings', self.save, primary=True))
         root.addLayout(footer)
@@ -168,7 +176,7 @@ class Settings(QWidget):
         form.setVerticalSpacing(16)
         self.field(form, 'width', 'Expanded width', 'spin', limits=(460, 1100))
         self.field(form, 'compact_width', 'Collapsed width', 'spin', limits=(200, 450))
-        self.field(form, 'height', 'Expanded height', 'spin', limits=(300, 850))
+        self.field(form, 'height', 'Expanded height', 'spin', limits=(220, 850))
         self.field(form, 'radius', 'Corner radius', 'spin', limits=(8, 48))
         self.field(form, 'opacity', 'Opacity (%)', 'spin', limits=(65, 100))
         self.field(form, 'font', 'Clock font', 'font')
@@ -222,7 +230,7 @@ class Settings(QWidget):
             self.screen_combo.addItem(screen.name())
         self.screen_combo.setCurrentIndex(min(self.store.settings['screen'], self.screen_combo.count() - 1))
         form.addRow('Display', self.screen_combo)
-        self.field(form, 'collapse_ms', 'Collapse delay (ms)', 'spin', limits=(150, 3000))
+        self.field(form, 'collapse_ms', 'Collapse delay (ms)', 'spin', limits=(0, 1000))
         root = self.field(form, 'search_root', 'File search folder')
         form.addRow('', button('Choose search folder', lambda: self.choose_folder(root)))
         layout.addLayout(form)
@@ -310,6 +318,10 @@ class Notch(QWidget):
         self.generation = 0
         self.search_cancel = threading.Event()
         self.media_state = {}
+        self.media_received = time.monotonic()
+        self.view = 'Music'
+        self.cover_bytes = None
+        self.pending_media_actions = []
         self.preferred_player = ''
         self.setWindowTitle('Nook')
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -317,7 +329,7 @@ class Notch(QWidget):
         self.setMouseTracking(True)
         self.animation = QPropertyAnimation(self, b'geometry', self)
         self.animation.setEasingCurve(QEasingCurve.OutCubic)
-        self.animation.setDuration(190)
+        self.animation.setDuration(150)
         self.animation.finished.connect(self.animation_finished)
         self.collapse_timer = QTimer(self)
         self.collapse_timer.setSingleShot(True)
@@ -327,14 +339,20 @@ class Notch(QWidget):
         self.search_timer.setInterval(300)
         self.search_timer.timeout.connect(self.search)
         self.root = QVBoxLayout(self)
-        self.root.setContentsMargins(18, 0, 18, 14)
+        self.root.setContentsMargins(20, 0, 20, 12)
+        self.root.setSizeConstraint(QLayout.SetNoConstraint)
         self.root.setSpacing(8)
         self.header = QWidget()
         self.header.setFixedHeight(38)
         header = QHBoxLayout(self.header)
         header.setContentsMargins(0, 0, 0, 0)
-        self.compact = label('●  Nook')
+        self.compact_art = AlbumArt(24)
+        header.addWidget(self.compact_art)
+        self.compact = TrackLabel('Nook')
         header.addWidget(self.compact, 1)
+        self.compact_state = label('')
+        self.compact_state.setPixmap(media_icon('wave').pixmap(18, 18))
+        header.addWidget(self.compact_state)
         self.clock = label('')
         header.addWidget(self.clock)
         self.root.addWidget(self.header)
@@ -349,7 +367,7 @@ class Notch(QWidget):
         self.clock_timer.start(1000)
         self.media_timer = QTimer(self)
         self.media_timer.timeout.connect(self.refresh_media)
-        self.media_timer.start(5000)
+        self.media_timer.start(1500)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.refresh_widgets)
         self.refresh_timer.start(300000)
@@ -360,7 +378,7 @@ class Notch(QWidget):
         self.menu.addAction('Expand', lambda: self.expand(True))
         self.menu.addAction('Settings', self.open_settings)
         self.menu.addSeparator()
-        self.menu.addAction('Quit Nook', QApplication.quit)
+        self.menu.addAction('Quit Nook', lambda: QApplication.exit(0))
         icon = QPixmap(64, 64)
         icon.fill(Qt.transparent)
         painter = QPainter(icon)
@@ -406,19 +424,23 @@ class Notch(QWidget):
         path = QPainterPath()
         path.moveTo(0, 0)
         path.lineTo(self.width(), 0)
-        path.lineTo(self.width(), self.height() - r)
-        path.quadTo(self.width(), self.height(), self.width() - r, self.height())
-        path.lineTo(r, self.height())
-        path.quadTo(0, self.height(), 0, self.height() - r)
+        path.quadTo(self.width() - 10, 0, self.width() - 10, 12)
+        path.lineTo(self.width() - 10, self.height() - r)
+        path.quadTo(self.width() - 10, self.height(), self.width() - r - 10, self.height())
+        path.lineTo(r + 10, self.height())
+        path.quadTo(10, self.height(), 10, self.height() - r)
+        path.lineTo(10, 12)
+        path.quadTo(10, 0, 0, 0)
         path.closeSubpath()
-        painter.fillPath(path, QColor(3, 3, 5, int(255 * self.store.settings['opacity'] / 100)))
+        painter.fillPath(path, QColor(0, 0, 0, int(255 * self.store.settings['opacity'] / 100)))
 
     def target_geometry(self):
         screens = QApplication.screens()
         screen = screens[min(max(0, self.store.settings['screen']), len(screens) - 1)]
         bounds = screen.geometry()
         width = min(self.store.settings['width' if self.expanded else 'compact_width'], bounds.width() - 20)
-        height = min(self.store.settings['height'], bounds.height() - 40) if self.expanded else 38
+        expanded_height = min(self.store.settings['height'], 210) if self.view == 'Music' else self.store.settings['height']
+        height = min(expanded_height, bounds.height() - 40) if self.expanded else 38
         return QRect(bounds.x() + (bounds.width() - width) // 2, bounds.y(), width, height)
 
     def reposition(self, *_):
@@ -429,13 +451,17 @@ class Notch(QWidget):
         self.collapse_timer.stop()
         if not expanded:
             self.pinned = False
-            self.pin.setText('Pin')
+            self.pin.setIcon(media_icon('pin'))
         if self.expanded == expanded:
             return
         self.expanded = expanded
-        self.body.hide()
+        self.update_clock()
         self.animation.stop()
+        self.body.setVisible(True)
+        self.body.setFixedSize(self.target_geometry().width() - 40 if expanded else self.store.settings['width'] - 40,
+                               self.target_geometry().height() - self.header.height() - 20 if expanded else self.body.height())
         if self.store.settings['animation']:
+            self.animation.setDuration(150 if expanded else 120)
             self.animation.setStartValue(self.geometry())
             self.animation.setEndValue(self.target_geometry())
             self.animation.start()
@@ -447,6 +473,8 @@ class Notch(QWidget):
     def animation_finished(self):
         self.body.setVisible(self.expanded)
         if self.expanded:
+            self.body.setMinimumSize(0, 0)
+            self.body.setMaximumSize(16777215, 16777215)
             self.refresh_media()
             self.refresh_tasks()
 
@@ -457,7 +485,7 @@ class Notch(QWidget):
         self.collapse_timer.start(self.store.settings['collapse_ms'])
 
     def maybe_collapse(self):
-        if not self.pinned and not self.geometry().contains(QCursor.pos()) and not self.search_input.hasFocus():
+        if not self.pinned and not self.geometry().contains(QCursor.pos()) and not (self.view == 'Files' and self.search_input.hasFocus()):
             self.expand(False)
 
     def mousePressEvent(self, event):
@@ -475,15 +503,27 @@ class Notch(QWidget):
 
     def toggle_pin(self):
         self.pinned = not self.pinned
-        self.pin.setText('Pinned' if self.pinned else 'Pin')
+        self.pin.setIcon(media_icon('pin', self.store.settings['accent'] if self.pinned else '#88888e'))
+        self.pin.setToolTip('Unpin notch' if self.pinned else 'Pin notch')
+
+    def preview(self):
+        self.pinned = True
+        self.pin.setIcon(media_icon('pin', self.store.settings['accent']))
+        self.pin.setToolTip('Unpin notch')
+        self.expand(True)
 
     def card(self, title):
         frame = QFrame()
         frame.setObjectName('card')
+        if title in ('Music', 'Time'):
+            frame.setStyleSheet('QFrame#card { background: transparent; border: 0; }')
+        self.card_frames[title] = frame
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(18, 15, 18, 16)
+        layout.setContentsMargins(8, 6, 10, 6)
         layout.setSpacing(10)
-        layout.addWidget(label(title, 'section'))
+        heading = label(title, 'section')
+        heading.setVisible(title not in ('Music', 'Time'))
+        layout.addWidget(heading)
         if self.pair_music_time and title in ('Music', 'Time'):
             self.cards.addWidget(frame, 0, 0 if title == 'Music' else 1)
         else:
@@ -496,10 +536,24 @@ class Notch(QWidget):
         self.search_cancel.set()
         clear(self.body_layout)
         toolbar = QHBoxLayout()
-        toolbar.addWidget(label('Your day, within reach.', 'muted'), 1)
-        self.pin = button('Pinned' if self.pinned else 'Pin', self.toggle_pin)
+        toolbar.setSpacing(6)
+        self.view_buttons = {}
+        for name in ('Music', 'Widgets', 'Files'):
+            tab = button(name, lambda checked=False, name=name: self.switch_view(name))
+            tab.setFixedHeight(26)
+            self.view_buttons[name] = tab
+            toolbar.addWidget(tab)
+        toolbar.addStretch()
+        self.pin = button('', self.toggle_pin, 'Pin notch')
+        self.pin.setIcon(media_icon('pin', '#88888e'))
+        self.pin.setObjectName('mediaControl')
+        self.pin.setFixedSize(26, 26)
         toolbar.addWidget(self.pin)
-        toolbar.addWidget(button('Settings', self.open_settings))
+        settings = button('', self.open_settings, 'Settings')
+        settings.setIcon(media_icon('settings', '#88888e'))
+        settings.setObjectName('mediaControl')
+        settings.setFixedSize(26, 26)
+        toolbar.addWidget(settings)
         self.body_layout.addLayout(toolbar)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText('Search files on this PC…')
@@ -507,17 +561,21 @@ class Notch(QWidget):
         self.search_input.textChanged.connect(self.queue_search)
         self.body_layout.addWidget(self.search_input)
         self.message = label(self.store.warning, 'muted', True)
+        self.message.setVisible(bool(self.store.warning))
         self.body_layout.addWidget(self.message)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.viewport().setStyleSheet('background: transparent;')
         content = QWidget()
+        content.setStyleSheet('background: transparent;')
         enabled = [n for n in self.store.settings['order'] if n in self.store.settings['enabled']]
-        self.pair_music_time = enabled[:2] == ['Music', 'Time'] and self.store.settings['width'] >= 660
+        self.pair_music_time = 'Music' in enabled and 'Time' in enabled and self.store.settings['width'] >= 600
+        self.card_frames = {}
         self.card_row = 1 if self.pair_music_time else 0
         self.cards = QGridLayout(content)
-        self.cards.setColumnStretch(0, 3)
-        self.cards.setColumnStretch(1, 2)
-        self.cards.setContentsMargins(0, 0, 5, 0)
+        self.cards.setColumnStretch(0, 7)
+        self.cards.setColumnStretch(1, 3)
+        self.cards.setContentsMargins(0, 0, 0, 0)
         self.cards.setSpacing(10)
         self.scroll.setWidget(content)
         self.body_layout.addWidget(self.scroll, 1)
@@ -537,7 +595,7 @@ class Notch(QWidget):
                 self.time_label = label('')
                 size = {'Minimal': 26, 'Large': 38, 'Editorial': 30}[self.store.settings['clock_style']]
                 self.time_label.setFont(QFont(self.store.settings['font'], size))
-                self.time_label.setStyleSheet('font-family: "%s"; font-size: %spx; color: %s;' % (self.store.settings['font'], size, self.store.settings['accent']))
+                self.time_label.setStyleSheet('font-family: "%s"; font-size: %spx; color: #f5f5f7;' % (self.store.settings['font'], size))
                 layout.addWidget(self.time_label)
                 self.date_label = label('', 'muted', True)
                 layout.addWidget(self.date_label)
@@ -574,40 +632,85 @@ class Notch(QWidget):
                 if name == 'Running tasks':
                     layout.addWidget(label('Process presence only. Task completion requires an agent integration.', 'muted', True))
         self.cards.setRowStretch(self.card_row, 1)
+        self.switch_view(self.view)
         self.reposition()
         self.update_clock()
         self.refresh_widgets()
         self.refresh_media()
 
+    def switch_view(self, name):
+        self.view = name
+        for title, frame in self.card_frames.items():
+            frame.setVisible((title in ('Music', 'Time')) if name == 'Music' else name == 'Widgets' and title not in ('Music', 'Time'))
+        for title, tab in self.view_buttons.items():
+            tab.setStyleSheet('background: %s; color: %s; border: 0; padding: 3px 12px; border-radius: 12px;' % ('#252527' if title == name else 'transparent', '#f5f5f5' if title == name else '#89898e'))
+        self.search_input.setVisible(name == 'Files')
+        self.search_results.setVisible(name == 'Files')
+        self.scroll.setVisible(name != 'Files')
+        self.message.setVisible(name == 'Files' or bool(self.store.warning))
+        if name == 'Files':
+            self.search_input.setFocus()
+        self.update_clock()
+        self.reposition()
+
     def build_music(self, layout):
         row = QHBoxLayout()
-        self.artwork = label('♫')
-        self.artwork.setFixedSize(70, 70)
-        self.artwork.setAlignment(Qt.AlignCenter)
-        self.artwork.setStyleSheet('background: #272332; border-radius: 14px; font-size: 32px; color: #b7b0ff;')
+        row.setSpacing(12)
+        self.artwork = AlbumArt(52)
         row.addWidget(self.artwork)
         details = QVBoxLayout()
-        self.track = label('Nothing playing', 'section', True)
-        self.artist = label('Start Spotify or Apple Music', 'muted', True)
+        details.setSpacing(2)
+        self.track = TrackLabel('Nothing playing')
+        self.track.setStyleSheet('font-size: 14px; font-weight: 600;')
+        self.artist = TrackLabel('Start Spotify or Apple Music')
+        self.artist.setStyleSheet('color: #939397; font-size: 12px;')
+        details.addStretch()
         details.addWidget(self.track)
         details.addWidget(self.artist)
+        details.addStretch()
         row.addLayout(details, 1)
         self.players = QComboBox()
-        self.players.setMaximumWidth(150)
+        self.players.setMaximumWidth(110)
         self.players.setAccessibleName('Media player')
-        self.players.activated.connect(lambda: self.choose_player())
+        self.players.activated.connect(self.choose_player)
+        self.players.hide()
         row.addWidget(self.players)
         layout.addLayout(row)
+        progress = QHBoxLayout()
+        progress.setSpacing(9)
+        self.elapsed = label('0:00', 'muted')
+        self.remaining = label('−0:00', 'muted')
+        self.progress = QSlider(Qt.Horizontal)
+        self.progress.setRange(0, 1000)
+        self.progress.setAccessibleName('Playback position')
+        self.progress.sliderReleased.connect(self.seek)
+        progress.addWidget(self.elapsed)
+        progress.addWidget(self.progress, 1)
+        progress.addWidget(self.remaining)
+        layout.addLayout(progress)
         controls = QHBoxLayout()
+        controls.setSpacing(16)
+        controls.addStretch()
         self.media_buttons = {}
-        for key, text, tip in [('previous', '⏮', 'Previous track'), ('play', '▶', 'Play or pause'), ('next', '⏭', 'Next track'), ('repeat', 'Repeat off', 'Cycle repeat off, playlist, song')]:
-            control = button(text, lambda checked=False, action=key: self.refresh_media(action), tip)
+        for key, tip in [('previous', 'Previous track'), ('play', 'Play or pause'), ('next', 'Next track'), ('repeat', 'Repeat off')]:
+            control = button('', lambda checked=False, action=key: self.refresh_media(action), tip)
+            control.setObjectName('mediaControl')
+            control.setIcon(media_icon(key))
+            control.setIconSize(QSize(24, 24))
+            control.setFixedSize(36, 32)
             control.setEnabled(False)
             self.media_buttons[key] = control
             controls.addWidget(control)
+        controls.addStretch()
         layout.addLayout(controls)
-        self.timeline = label('', 'muted')
+        self.timeline = label('')
+        self.timeline.hide()
         layout.addWidget(self.timeline)
+
+    def seek(self):
+        duration = self.media_state.get('duration', 0)
+        if duration:
+            self.refresh_media(('seek', duration * self.progress.value() / 1000))
 
     def choose_player(self):
         self.preferred_player = self.players.currentText()
@@ -665,23 +768,58 @@ class Notch(QWidget):
         if not self.store.settings['hour24']:
             text = text.lstrip('0') + now.strftime(' %p')
         self.clock.setText(text if 'Time' in self.store.settings['enabled'] else '')
-        self.compact.setText('Nook' if self.expanded else ('♫  ' + self.media_state.get('title', '')[:18] if self.media_state.get('playing') else '●  Nook'))
+        compact_visible = not self.expanded or self.view != 'Music'
+        self.header.setFixedHeight(38 if compact_visible else 8)
+        self.clock.setVisible(compact_visible)
+        active = bool(self.media_state.get('source')) and 'Music' in self.store.settings['enabled']
+        self.compact.setText(self.media_state.get('title', 'Nook') if active else 'Nook')
+        self.compact.setVisible(compact_visible)
+        self.compact_art.setVisible(active and compact_visible)
+        self.compact_state.setVisible(active and compact_visible)
+        self.compact_state.setPixmap(media_icon('wave' if self.media_state.get('playing') else 'pause', '#a6a6ac').pixmap(16, 16))
+        self.update_progress()
         if 'Time' in self.store.settings['enabled']:
             self.time_label.setText(text)
             self.date_label.setText(now.strftime('%A\n%d %B'))
 
+    def update_progress(self):
+        if 'Music' not in self.store.settings['enabled'] or not hasattr(self, 'progress'):
+            return
+        duration = self.media_state.get('duration', 0)
+        elapsed = self.media_state.get('position', 0)
+        if self.media_state.get('playing'):
+            elapsed += time.monotonic() - self.media_received
+        elapsed = max(0, min(duration, elapsed))
+        remaining = max(0, int(duration - elapsed))
+        self.elapsed.setText('%d:%02d' % (int(elapsed) // 60, int(elapsed) % 60))
+        self.remaining.setText('−%d:%02d' % (remaining // 60, remaining % 60))
+        if not self.progress.isSliderDown():
+            self.progress.setValue(round(elapsed / duration * 1000) if duration else 0)
+        self.progress.setEnabled(bool(duration and self.media_state.get('can_seek')))
+
     def refresh_media(self, action=None):
         if 'Music' not in self.store.settings['enabled']:
             return
+        if 'media' in self.jobs:
+            if action is not None:
+                self.pending_media_actions.append(action)
+            return
+        if self.pending_media_actions:
+            if action is not None:
+                self.pending_media_actions.append(action)
+            action = self.pending_media_actions.pop(0)
         generation = self.generation
         def done(state):
             if generation != self.generation:
                 return
             self.media_state = state
+            self.media_received = time.monotonic()
             self.track.setText(state['title'])
             self.artist.setText(state['artist'])
-            self.media_buttons['play'].setText('Ⅱ' if state.get('playing') else '▶')
-            self.media_buttons['repeat'].setText({0: 'Repeat off', 1: 'Repeat song', 2: 'Repeat playlist'}.get(state.get('repeat'), 'Repeat off'))
+            self.media_buttons['play'].setIcon(media_icon('pause' if state.get('playing') else 'play'))
+            repeat = state.get('repeat', 0)
+            self.media_buttons['repeat'].setIcon(media_icon('repeat-one' if repeat == 1 else 'repeat', self.store.settings['accent'] if repeat else '#88888e'))
+            self.media_buttons['repeat'].setToolTip({0: 'Repeat off', 1: 'Repeat song', 2: 'Repeat playlist'}.get(repeat, 'Repeat off'))
             for key, control in self.media_buttons.items():
                 control.setEnabled(state.get('can_' + key, False))
             self.players.blockSignals(True)
@@ -690,19 +828,25 @@ class Notch(QWidget):
             self.players.setCurrentText(state.get('source', ''))
             self.players.blockSignals(False)
             self.players.setVisible(len(state.get('sessions', [])) > 1)
-            if state.get('artwork'):
-                pixmap = QPixmap()
-                pixmap.loadFromData(bytes(state['artwork']))
-                self.artwork.setPixmap(pixmap.scaled(70, 70, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            else:
-                self.artwork.setPixmap(QPixmap())
-                self.artwork.setText('♫')
+            artwork = bytes(state.get('artwork') or b'')
+            if artwork != self.cover_bytes:
+                self.cover_bytes = artwork
+                self.cover = QPixmap()
+                if artwork:
+                    self.cover.loadFromData(artwork)
+            if hasattr(self, 'cover'):
+                self.artwork.setPixmap(self.cover)
+                self.compact_art.setPixmap(self.cover)
             position, duration = int(state.get('position', 0)), int(state.get('duration', 0))
             self.timeline.setText('%d:%02d / %d:%02d' % (position // 60, position % 60, duration // 60, duration % 60) if duration else '')
             self.update_clock()
+            if self.pending_media_actions:
+                QTimer.singleShot(0, self.refresh_media)
         def failed(message):
             if generation == self.generation:
                 self.artist.setText(message)
+            if self.pending_media_actions:
+                QTimer.singleShot(0, self.refresh_media)
         self.run_job('media', lambda: services.media(action, self.preferred_player), done, failed)
 
     def refresh_widgets(self):
@@ -752,7 +896,7 @@ class Notch(QWidget):
 
     def search(self):
         term = self.search_input.text().strip()
-        self.scroll.setVisible(not term)
+        self.scroll.setVisible(False)
         self.search_results.setVisible(bool(term))
         if len(term) < 2:
             self.message.setText('Type at least two characters.' if term else '')

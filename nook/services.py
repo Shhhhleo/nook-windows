@@ -66,7 +66,9 @@ async def media_async(action=None, preferred=''):
     if action:
         methods = {'previous': session.try_skip_previous_async, 'next': session.try_skip_next_async,
                    'play': session.try_toggle_play_pause_async}
-        if action == 'repeat':
+        if isinstance(action, tuple) and action[0] == 'seek':
+            success = await session.try_change_playback_position_async(int(action[1] * 10_000_000))
+        elif action == 'repeat':
             modes = [MediaPlaybackAutoRepeatMode.NONE, MediaPlaybackAutoRepeatMode.LIST, MediaPlaybackAutoRepeatMode.TRACK]
             current = info.auto_repeat_mode
             mode = modes[(modes.index(current) + 1) % 3] if current in modes else modes[1]
@@ -75,6 +77,7 @@ async def media_async(action=None, preferred=''):
             success = await methods[action]()
         if not success:
             raise RuntimeError('This player does not support that control through Windows.')
+        await asyncio.sleep(0.2)
         info = session.get_playback_info()
     props = await session.try_get_media_properties_async()
     timeline = session.get_timeline_properties()
@@ -100,7 +103,8 @@ async def media_async(action=None, preferred=''):
                 position=position, duration=duration, artwork=artwork,
                 sessions=[s.source_app_user_model_id for s in sessions], source=session.source_app_user_model_id,
                 can_play=controls.is_play_pause_toggle_enabled, can_next=controls.is_next_enabled,
-                can_previous=controls.is_previous_enabled, can_repeat=controls.is_repeat_enabled)
+                can_previous=controls.is_previous_enabled, can_repeat=controls.is_repeat_enabled,
+                can_seek=controls.is_playback_position_enabled)
 
 
 def media(action=None, preferred=''):

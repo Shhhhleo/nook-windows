@@ -10,9 +10,9 @@ DATA.mkdir(parents=True, exist_ok=True)
 WIDGETS = ['Music', 'Time', 'To do', 'Weather', 'Google Calendar', 'Notion', 'Stocks',
            'Claude usage', 'Codex usage', 'Running tasks', 'Calls', 'Academia']
 DEFAULTS = dict(enabled=['Music', 'Time', 'To do'], order=WIDGETS, width=680,
-                compact_width=250, height=460, radius=28, opacity=100, screen=0,
+                compact_width=380, height=460, radius=28, opacity=100, screen=0,
                 accent='#b7b0ff', font='Segoe UI', clock_style='Minimal', weather_style='Detailed',
-                hour24=False, seconds=False, animation=True, collapse_ms=650,
+                hour24=False, seconds=False, animation=True, collapse_ms=90, ui_revision=2,
                 city='', fahrenheit=False, symbols='AAPL, MSFT', search_root=str(Path.home()),
                 google_client_id='', google_client_secret='', todos=[], deadlines=[])
 
@@ -41,7 +41,14 @@ class Store:
         self.settings = json.loads(json.dumps(DEFAULTS))
         self.warning = ''
         try:
-            self.settings.update(json.loads((DATA / 'settings.json').read_text('utf-8')))
+            saved = json.loads((DATA / 'settings.json').read_text('utf-8'))
+            if saved.get('ui_revision', 1) < 2:
+                if saved.get('collapse_ms') == 650:
+                    saved['collapse_ms'] = 90
+                if saved.get('compact_width') == 250:
+                    saved['compact_width'] = 380
+                saved['ui_revision'] = 2
+            self.settings.update(saved)
         except FileNotFoundError:
             pass
         except (ValueError, OSError):

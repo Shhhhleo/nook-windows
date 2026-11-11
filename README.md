@@ -4,7 +4,7 @@ A local, customisable notch at the centre of the top edge of a selected display.
 
 ## Run
 
-Open `dist/Nook/Nook.exe`, or double-click `launch.cmd`. Keep the entire `dist/Nook` folder together. Right-click the notch or use its tray icon to open Settings or quit. Double-click the tray icon to open Settings. Escape collapses the notch.
+Open `dist/Nook/Nook.exe`, or double-click `launch.cmd`. Keep the entire `dist/Nook` folder together. Right-click the notch or use its tray icon to open Settings or quit. Double-click the tray icon to open Settings. Escape collapses the notch. The Music tab opens a shallow 210 px player; Widgets and Files open the configured full panel. The collapsed strip retains artwork and the current track while playing or paused. Expansion takes 150 ms; contraction takes 120 ms after a default 90 ms leave delay. Preview pins the notch open.
 
 ## Features and connection status
 
@@ -43,7 +43,7 @@ python -m pip --python .venv/Scripts/python.exe install -r requirements.txt pyin
 ./build.ps1
 ```
 
-The portable build bundles its runtime. No Python installation is needed to run the built app. Qt Essentials avoids a web engine. Media polls every five seconds, other network widgets every five minutes, and process presence every fifteen seconds while expanded. Media calls have an eight-second timeout. File search runs only after input and cancels when replaced. Networking and search use a bounded worker pool.
+The portable build bundles its runtime. No Python installation is needed to run the built app. Qt Essentials avoids a web engine. Media polls every 1.5 seconds, other network widgets every five minutes, and process presence every fifteen seconds while expanded. Media calls have an eight-second timeout. File search runs only after input and cancels when replaced. Networking and search use a bounded worker pool.
 
 ## Integration references
 
