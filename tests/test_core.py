@@ -57,7 +57,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(notch.target_geometry().top(), bounds.top())
         self.assertLessEqual(abs(notch.target_geometry().center().x() - bounds.center().x()), 1)
         notch.expand(True)
-        self.assertEqual(notch.height(), min(210, bounds.height() - 40))
+        self.assertEqual(notch.height(), min(store.settings['music_height'], bounds.height() - 40))
         notch.media_state = {'source': 'Spotify', 'title': 'Paused song', 'playing': False}
         notch.update_clock()
         self.assertEqual(notch.compact.text(), 'Paused song')
@@ -74,9 +74,9 @@ class CoreTests(unittest.TestCase):
             notch.rebuild()
             self.app.processEvents()
         settings = Settings(notch)
-        self.assertEqual(settings.tabs.count(), 4)
+        self.assertEqual(settings.tabs.count(), 6)
         notch.expand(False)
-        self.assertEqual(notch.height(), 38)
+        self.assertEqual(notch.height(), store.settings['compact_height'])
         store.settings['animation'] = True
         notch.switch_view('Music')
         notch.expand(True)

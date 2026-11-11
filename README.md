@@ -4,7 +4,31 @@ A local, customisable notch at the centre of the top edge of a selected display.
 
 ## Run
 
-Open `dist/Nook/Nook.exe`, or double-click `launch.cmd`. Keep the entire `dist/Nook` folder together. Right-click the notch or use its tray icon to open Settings or quit. Double-click the tray icon to open Settings. Escape collapses the notch. The Music tab opens a shallow 210 px player; Widgets and Files open the configured full panel. The collapsed strip retains artwork and the current track while playing or paused. Expansion takes 150 ms; contraction takes 120 ms after a default 90 ms leave delay. Preview pins the notch open.
+Open `dist/Nook/Nook.exe`, or double-click `launch.cmd`. Keep the entire `dist/Nook` folder together. Right-click the notch or use its tray icon to open Settings or quit. Double-click the tray icon to open Settings. Escape collapses the notch. The default Music panel is 560 × 174 logical pixels, with a 420 × 58 resting strip that retains artwork, title and artist while playing or paused. Expansion takes 150 ms; contraction takes 120 ms after a default 90 ms leave delay. Preview pins the notch open.
+
+## Appearance templates
+
+Settings → Appearance offers Everyday, Focus and Studio presets. One click applies the sizes and previews the notch. Fine-tuning is hidden until requested. Import or save a `.json` template to share an appearance. Downloadable copies are in `templates/` in this repository, accessible through the Template downloads button (GitHub sign-in is required for this private repository). Templates contain only validated appearance values, never account credentials or personal data. They cannot execute code. Existing original default dimensions are migrated to the new compact layout.
+
+## Desktop widgets
+
+Settings → Desktop adds individual Clock, Music, To do, Weather, Calendar, Note and Photo tiles, or a ready-made three-tile layout. Drag a tile by its heading. Its ··· menu changes Glass, Paper or Midnight style, locks positions, or removes the widget. Positions, tasks, notes and photo choices persist locally. Tiles sit behind normal application windows and are independent of notch pinning. Glass uses transparency, not an operating-system blur effect. Desktop behaviour after Explorer restarts, Show Desktop, or virtual-desktop changes has not been validated.
+
+Music and tasks share data with the notch. Weather needs a city in Connections. Calendar shows imported deadlines for today and upcoming connected Google Calendar events. Photo tiles use images selected from the PC. A maximum of 20 desktop tiles prevents accidental unbounded creation.
+
+## Nook assistant
+
+Select the animated companion in the notch. Type a message or press Talk for one Windows speech recognition session, review the recognised text, then Send. Read replies aloud is optional in Settings → Assistant. Voice requires a working default microphone, Windows desktop microphone permission and an installed Windows speech language. Speech input and output run locally. Dictation is bounded by a timeout and never listens continuously.
+
+Without an AI model, these commands already work:
+
+- `24 * 7` or `calculate (25 + 5) / 2` for bounded local arithmetic.
+- `find files report` or `find my invoice.pdf` for filename search in the Behaviour search folder. Activate a result to open its containing folder.
+- `look up solar energy` or `/web solar energy` for live Wikipedia search results with source links. A button opens a wider search in the browser. This is not a general web crawling service.
+
+For conversation, install [Ollama for Windows](https://ollama.com/download/windows) and a local model, then use Find installed models in Settings → Assistant and save the selection. A small starter option is `ollama pull qwen3:0.6b` (approximately 523 MB download, with additional runtime memory). Nook does not download models automatically. It only contacts Ollama on `127.0.0.1:11434`, excludes cloud model entries, limits context and output, and requests unloading after each response. Small models have limited reasoning quality and may require a clearer prompt.
+
+The model can answer or request bounded maths, filename search and Wikipedia tools. A model-proposed online lookup requires pressing the visible lookup button. Explicit `/web` or `look up` commands run directly. No shell execution, file editing, file-content reading or account access is granted to the model. Chat text stays in process memory and clears when the app closes. Public lookup topics go to Wikipedia; filenames and file contents are not uploaded. This is a small assistant, not a full autonomous desktop-control agent.
 
 ## Features and connection status
 
@@ -52,5 +76,8 @@ The portable build bundles its runtime. No Python installation is needed to run 
 - [Notion search](https://developers.notion.com/reference/post-search)
 - [Open-Meteo](https://open-meteo.com/en/docs)
 - [Finnhub](https://finnhub.io/docs/api/quote)
+- [Ollama local chat API](https://docs.ollama.com/api/chat)
+- [Windows single-utterance speech recognition](https://learn.microsoft.com/en-us/dotnet/api/system.speech.recognition.speechrecognitionengine.recognize)
+- [MediaWiki search](https://www.mediawiki.org/wiki/API:Search)
 
 This is an initial desktop implementation. Provider-backed account integrations require credentials and live account validation. The portable executable is unsigned.

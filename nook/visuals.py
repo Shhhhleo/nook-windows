@@ -2,6 +2,7 @@
 from PySide6.QtCore import Qt, QSize, QRectF
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QIcon
 from PySide6.QtWidgets import QLabel, QWidget
+from datetime import datetime, timedelta
 
 
 def media_icon(name, color='#f4f4f5'):
@@ -104,3 +105,52 @@ class AlbumArt(QWidget):
             painter.drawPixmap((self.width()-scaled.width())//2, (self.height()-scaled.height())//2, scaled)
         else:
             media_icon('wave', '#77777d').paint(painter, self.rect().adjusted(6, 6, -6, -6))
+
+
+class WeekStrip(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setMinimumWidth(120)
+        self.setFixedHeight(36)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        today = datetime.now().date()
+        start = today - timedelta(days=today.weekday())
+        font = painter.font()
+        font.setPixelSize(9)
+        painter.setFont(font)
+        cell = self.width() / 7
+        for i in range(7):
+            day = start + timedelta(days=i)
+            painter.setPen(QColor('#72727a'))
+            painter.drawText(QRectF(i*cell, 0, cell, 14), Qt.AlignCenter, day.strftime('%a')[0])
+            painter.setPen(QColor('#64afff' if day == today else '#c0c0c7'))
+            painter.drawText(QRectF(i*cell, 16, cell, 18), Qt.AlignCenter, str(day.day))
+
+
+class TemplatePreview(QWidget):
+    def __init__(self, width):
+        super().__init__()
+        self.ratio = width / 680
+        self.setFixedHeight(68)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor('#25252b'))
+        painter.drawRoundedRect(QRectF(self.rect()), 9, 9)
+        width = (self.width()-18) * self.ratio
+        x = (self.width()-width)/2
+        painter.setBrush(QColor('#000000'))
+        painter.drawRoundedRect(QRectF(x, -7, width, 58), 10, 10)
+        painter.setBrush(QColor('#727080'))
+        painter.drawRoundedRect(QRectF(x+9, 15, 23, 23), 4, 4)
+        painter.setBrush(QColor('#d7d5df'))
+        painter.drawRoundedRect(QRectF(x+39, 17, max(12, width-54), 3), 1, 1)
+        painter.setBrush(QColor('#777580'))
+        painter.drawRoundedRect(QRectF(x+39, 25, max(8, width-64), 2), 1, 1)
+        for offset in (40, 50, 60):
+            painter.drawEllipse(QRectF(x+offset, 34, 3, 3))
