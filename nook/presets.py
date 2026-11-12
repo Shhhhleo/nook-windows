@@ -3,11 +3,11 @@ import json
 from pathlib import Path
 
 PRESETS = {
-    'Everyday': dict(width=760, music_height=174, compact_width=420, compact_height=58,
+    'Everyday': dict(width=640, music_height=150, compact_width=420, compact_height=58,
                      height=390, radius=24, opacity=100, desktop_theme='Glass'),
-    'Focus': dict(width=700, music_height=168, compact_width=360, compact_height=52,
+    'Focus': dict(width=600, music_height=144, compact_width=360, compact_height=52,
                   height=360, radius=22, opacity=100, desktop_theme='Paper'),
-    'Studio': dict(width=840, music_height=184, compact_width=440, compact_height=62,
+    'Studio': dict(width=720, music_height=164, compact_width=440, compact_height=62,
                    height=430, radius=28, opacity=100, desktop_theme='Midnight'),
 }
 DESCRIPTIONS = {
@@ -15,7 +15,7 @@ DESCRIPTIONS = {
     'Focus': 'Small and quiet, with space left for your work.',
     'Studio': 'More room for track names and desktop essentials.',
 }
-LIMITS = {'width': (460, 1100), 'music_height': (160, 240), 'compact_width': (320, 600),
+LIMITS = {'width': (460, 1100), 'music_height': (144, 240), 'compact_width': (320, 600),
           'compact_height': (48, 90), 'height': (300, 850), 'radius': (8, 48), 'opacity': (65, 100)}
 THEMES = ('Glass', 'Paper', 'Midnight')
 

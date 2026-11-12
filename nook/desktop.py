@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl, QRectF, QSize
-from PySide6.QtGui import QPainter, QColor, QPen, QPixmap, QDesktopServices
+from PySide6.QtGui import QPainter, QColor, QPen, QPixmap, QDesktopServices, QPainterPath, QLinearGradient
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QCheckBox, QLineEdit, QMenu, QFileDialog, QTextEdit, QScrollArea)
 from .visuals import AlbumArt, TrackLabel, media_icon, VinylArt
@@ -40,24 +40,23 @@ class DesktopTile(QWidget):
         self.setWindowTitle('Nook desktop · ' + self.kind)
         self.resize(*SIZES[self.kind])
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 12, 18, 16)
+        root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(8)
-        header = QHBoxLayout()
         self.heading = plain(self.kind)
-        self.heading.setStyleSheet('font-size: 11px; font-weight: 600;')
-        header.addWidget(self.heading, 1)
-        menu = QPushButton('···')
-        menu.setFixedSize(24, 22)
-        menu.setAccessibleName('Desktop widget options')
-        menu.clicked.connect(self.options)
-        header.addWidget(menu)
-        root.addLayout(header)
+        self.heading.setParent(self)
+        self.heading.hide()
+        self.setAccessibleName(self.kind + ' desktop widget')
+        self.menu_button = QPushButton('···', self)
+        self.menu_button.setFixedSize(24, 22)
+        self.menu_button.setAccessibleName(self.kind + ' widget options')
+        self.menu_button.clicked.connect(self.options)
+        self.menu_button.hide()
         self.content = QVBoxLayout()
         self.content.setSpacing(8)
         root.addLayout(self.content, 1)
         if self.kind == 'Clock':
             self.face = ClockFace(config.get('design', 'Numeral'))
-            self.resize(440, 180) if self.face.design == 'World row' else self.resize(220, 240)
+            self.resize(440, 180) if self.face.design == 'World row' else self.resize(220, 220)
             self.content.addWidget(self.face, 1)
         elif self.kind == 'Music':
             self.art = VinylArt(120)
@@ -108,9 +107,9 @@ class DesktopTile(QWidget):
             self.photo = QLabel()
             self.photo.setAlignment(Qt.AlignCenter)
             self.content.addWidget(self.photo, 1)
-            choose = QPushButton('Choose photo')
-            choose.clicked.connect(self.choose_photo)
-            self.content.addWidget(choose)
+            self.choose_button = QPushButton('Choose photo')
+            self.choose_button.clicked.connect(self.choose_photo)
+            self.content.addWidget(self.choose_button)
             self.load_photo()
         else:
             self.large = plain('')
@@ -122,6 +121,19 @@ class DesktopTile(QWidget):
         self.apply_theme()
         self.restore_position()
         self.refresh()
+        self.menu_button.raise_()
+
+    def enterEvent(self, event):
+        self.menu_button.show()
+
+    def leaveEvent(self, event):
+        self.menu_button.hide()
+
+    def resizeEvent(self, event):
+        if hasattr(self, 'menu_button'):
+            self.menu_button.move(self.width()-34, 7)
+        if self.kind == 'Photo' and hasattr(self, 'choose_button'):
+            self.load_photo()
 
     def apply_theme(self):
         theme = self.config.get('theme') or self.notch.store.settings['desktop_theme']
@@ -130,7 +142,8 @@ class DesktopTile(QWidget):
         self.setStyleSheet('''QWidget { color: %s; background: transparent; }
             QPushButton { border: 0; border-radius: 7px; padding: 2px; }
             QPushButton:hover { background: rgba(128,128,128,35); }
-            QLineEdit, QTextEdit { background: rgba(128,128,128,16); border: 0; border-radius: 8px; padding: 6px; }
+            QLineEdit, QTextEdit { background: transparent; border: 0; border-radius: 10px; padding: 6px; }
+            QLineEdit:focus, QTextEdit:focus { background: rgba(128,128,128,14); }
             QCheckBox { spacing: 6px; padding: 3px; }
             QScrollArea { border: 0; }
             QMenu { background: #25252c; color: white; }
@@ -144,12 +157,15 @@ class DesktopTile(QWidget):
         background, _, _, alpha = self.colors
         color = QColor(background)
         color.setAlpha(alpha)
-        painter.setBrush(color)
-        painter.setPen(QPen(QColor(255, 255, 255, 85), 1))
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 22, 22)
+        gradient = QLinearGradient(0, 0, self.width()*.6, self.height())
+        gradient.setColorAt(0, color.lighter(103))
+        gradient.setColorAt(1, color)
+        painter.setBrush(gradient)
+        painter.setPen(QPen(QColor(255, 255, 255, 48), .6))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 26, 26)
         if self.kind == 'Note':
             painter.setPen(QPen(QColor(128, 128, 128, 50), 1))
-            for y in range(67, self.height()-18, 25):
+            for y in range(47, self.height()-18, 25):
                 painter.drawLine(20, y, self.width()-20, y)
 
     def restore_position(self):
@@ -179,6 +195,8 @@ class DesktopTile(QWidget):
 
     def options(self):
         menu = QMenu(self)
+        if self.kind == 'Photo':
+            menu.addAction('Change photo', self.choose_photo)
         if self.kind == 'Clock':
             faces = menu.addMenu('Clock face')
             for design in DESIGNS:
@@ -195,7 +213,7 @@ class DesktopTile(QWidget):
     def set_design(self, design):
         self.config['design'] = design
         self.face.design = design
-        self.resize(440, 180) if design == 'World row' else self.resize(220, 240)
+        self.resize(440, 180) if design == 'World row' else self.resize(220, 220)
         self.face.update()
         self.notch.store.save()
 
@@ -246,6 +264,7 @@ class DesktopTile(QWidget):
             while self.tasks.count():
                 item = self.tasks.takeAt(0)
                 if item.widget():
+                    item.widget().hide()
                     item.widget().deleteLater()
             for index, task in enumerate(tasks):
                 check = QCheckBox()
@@ -286,10 +305,23 @@ class DesktopTile(QWidget):
 
     def load_photo(self):
         pixmap = QPixmap(self.config.get('path', ''))
+        self.choose_button.setVisible(pixmap.isNull())
         if pixmap.isNull():
             self.photo.setText('A little inspiration.\nChoose a photo from your PC.')
         else:
-            self.photo.setPixmap(pixmap.scaled(204, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            size = self.size()-QSize(32, 32)
+            scaled = pixmap.scaled(size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            cropped = scaled.copy((scaled.width()-size.width())//2, (scaled.height()-size.height())//2, size.width(), size.height())
+            rounded = QPixmap(size)
+            rounded.fill(Qt.transparent)
+            painter = QPainter(rounded)
+            painter.setRenderHint(QPainter.Antialiasing)
+            clip = QPainterPath()
+            clip.addRoundedRect(QRectF(rounded.rect()), 18, 18)
+            painter.setClipPath(clip)
+            painter.drawPixmap(0, 0, cropped)
+            painter.end()
+            self.photo.setPixmap(rounded)
 
 
 class DesktopManager:

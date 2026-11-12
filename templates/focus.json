@@ -1,8 +1,8 @@
 {
   "format": "nook-appearance-v1",
   "settings": {
-    "width": 700,
-    "music_height": 168,
+    "width": 600,
+    "music_height": 144,
     "compact_width": 360,
     "compact_height": 52,
     "height": 360,

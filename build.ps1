@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = 'dist')
+param([string]$OutputDirectory = 'dist/Snippy')
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $originalPath = $env:PATH
@@ -12,6 +12,8 @@ try {
     }
     Copy-Item -LiteralPath 'vendor/ollama' -Destination "$OutputDirectory/Nook/ollama" -Recurse -Force
     Copy-Item -LiteralPath 'vendor/models' -Destination "$OutputDirectory/Nook/models" -Recurse -Force
+    Copy-Item -LiteralPath 'packaging/AppxManifest.xml','packaging/Register-Nook.ps1','packaging/Notification-setup.md' -Destination "$OutputDirectory/Nook" -Force
+    Copy-Item -LiteralPath 'packaging/Assets' -Destination "$OutputDirectory/Nook/Assets" -Recurse -Force
 } finally {
     $env:PATH = $originalPath
 }

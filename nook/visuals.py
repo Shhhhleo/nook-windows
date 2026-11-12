@@ -110,7 +110,7 @@ class AlbumArt(QWidget):
 class WeekStrip(QWidget):
     def __init__(self):
         super().__init__()
-        self.setMinimumWidth(180)
+        self.setMinimumWidth(150)
         self.setFixedHeight(48)
 
     def paintEvent(self, event):

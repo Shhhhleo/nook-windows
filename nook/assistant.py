@@ -47,13 +47,14 @@ def calculate(expression):
 
 
 def ollama_request(path, payload=None, timeout=90):
-    local_ai.ensure_running()
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(OLLAMA + path, data, {'Content-Type': 'application/json'})
-    # Do not send local prompts through a system proxy.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(req, timeout=timeout) as response:
-        return json.load(response)
+    with local_ai.request_lock:
+        local_ai.ensure_running()
+        data = json.dumps(payload).encode() if payload is not None else None
+        req = urllib.request.Request(OLLAMA + path, data, {'Content-Type': 'application/json'})
+        # Do not send local prompts through a system proxy.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=timeout) as response:
+            return json.load(response)
 
 
 def models():
@@ -120,7 +121,7 @@ def respond(prompt, history, settings):
                 'Try “24 * 7”, “find files report” or “look up solar energy”.'}
     if 'cloud' in model.lower() or model not in models():
         raise ValueError('Choose an installed local Ollama model in Settings → Assistant.')
-    system = ('You are Nook, a concise local desktop assistant. Return JSON with action and argument. '
+    system = ('You are Snippy, a concise local desktop assistant. Return JSON with action and argument. '
               'Allowed actions: answer (argument is your reply), calculate (arithmetic expression), '
               'find_files (filename substring), web_lookup (public topic search). '
               'Use tools for calculations, local filenames and current/online facts. '

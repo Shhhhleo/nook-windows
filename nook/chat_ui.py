@@ -3,90 +3,26 @@ import math
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from PySide6.QtCore import Qt, QTimer, QRectF, QUrl
+from PySide6.QtCore import Qt, QTimer, QRectF, QUrl, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QDesktopServices
 from PySide6.QtWidgets import (QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel,
                               QLineEdit, QTextBrowser, QListWidget, QListWidgetItem)
 from . import assistant
+from .snippy import CloudFace
 
 
-class Companion(QPushButton):
-    """A small native animated companion; no web renderer or video loop."""
+class Companion(CloudFace):
     def __init__(self, owner, callback, size=28):
-        super().__init__()
-        self.owner = owner
-        self.phase = 0
+        super().__init__(owner, size)
         self.busy = False
-        self.setFixedSize(size, size)
-        self.setAccessibleName('Open Nook assistant')
-        self.setToolTip('Nook assistant')
-        self.setCursor(Qt.PointingHandCursor)
         self.clicked.connect(callback)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.tick)
-
-    def showEvent(self, event):
-        self.timer.start(70 if self.busy else 160)
-        super().showEvent(event)
-
-    def hideEvent(self, event):
-        self.timer.stop()
-        super().hideEvent(event)
-
-    def tick(self):
-        if self.owner.store.settings['animation']:
-            self.phase += 0.22
-            self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.scale(self.width()/32, self.height()/32)
-        pulse = math.sin(self.phase) if self.busy else math.sin(self.phase)*0.3
-        painter.setPen(QPen(QColor('#555269'), 1))
-        painter.setBrush(QColor('#201e2b'))
-        painter.drawEllipse(QRectF(1, 1, 30, 30))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor('#d7d1ff'))
-        painter.drawRoundedRect(QRectF(7, 8 + pulse, 18, 16), 7, 7)
-        painter.setBrush(QColor('#2b2640'))
-        blink = int(self.phase * 10) % 135 < 5
-        for x in (12, 19):
-            painter.drawRoundedRect(QRectF(x, 14 + pulse, 2, 1 if blink else 4), 1, 1)
-        if self.hasFocus():
-            painter.setPen(QPen(QColor('#b7b0ff'), 1))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(QRectF(0.5, 0.5, 31, 31))
-
-
-class CloudCompanion(Companion):
-    def __init__(self, owner):
-        super().__init__(owner, owner.open_assistant, 88)
-        self.setFixedSize(88, 72)
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        bob = math.sin(self.phase)*3
-        painter.translate(0, bob)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor('#e8e8f6'))
-        for x, y, w, h in [(7, 36, 73, 24), (17, 26, 29, 30), (37, 24, 32, 34)]:
-            painter.drawEllipse(QRectF(x, y, w, h))
-        painter.setBrush(QColor('#aaa2e8'))
-        painter.drawRoundedRect(QRectF(30, 9, 29, 28), 12, 12)
-        painter.setBrush(QColor('#282139'))
-        for x in (38, 49):
-            painter.drawRoundedRect(QRectF(x, 19, 3, 6), 1.5, 1.5)
-
-    def follow(self):
-        bounds = self.owner.screen().geometry()
-        self.move(min(self.owner.geometry().right()+6, bounds.right()-self.width()), self.owner.y()+30)
 
 
 class AssistantPanel(QWidget):
+    submitted = Signal(str)
+    response_ready = Signal(object)
+    activity = Signal(bool)
+    voice_ready = Signal(str)
     def __init__(self, notch):
         super().__init__()
         self.notch = notch
@@ -125,8 +61,8 @@ class AssistantPanel(QWidget):
         row = QHBoxLayout()
         self.input = QLineEdit()
         self.input.setMaxLength(4000)
-        self.input.setAccessibleName('Message Nook assistant')
-        self.input.setPlaceholderText('Ask Nook, calculate, or find a file…')
+        self.input.setAccessibleName('Message Snippy')
+        self.input.setPlaceholderText('Ask Snippy, calculate, or find a file…')
         self.input.returnPressed.connect(self.send)
         row.addWidget(self.input, 1)
         self.mic = QPushButton('Talk')
@@ -137,7 +73,7 @@ class AssistantPanel(QWidget):
         self.send_button.clicked.connect(self.send)
         row.addWidget(self.send_button)
         root.addLayout(row)
-        self.append('Nook', 'Ready when you are. Try “24 * 7”, “find files report” or “look up solar energy”.')
+        self.append('Snippy', 'Ready when you are. Try “24 * 7”, “find files report” or “look up solar energy”.')
 
     def focus_input(self):
         self.input.setFocus()
@@ -156,7 +92,9 @@ class AssistantPanel(QWidget):
         self.results.clear()
         self.results.hide()
         self.web_button.hide()
-        self.append('Nook', 'Conversation cleared. Messages stay in memory only.')
+        self.web_query = ''
+        self.confirm_query = ''
+        self.append('Snippy', 'Conversation cleared. Messages stay in memory only.')
 
     def set_busy(self, value, status='Ready'):
         self.busy = value
@@ -164,6 +102,7 @@ class AssistantPanel(QWidget):
         self.status.setText(status)
         self.send_button.setEnabled(not value)
         self.mic.setEnabled(not value)
+        self.activity.emit(value)
 
     def send(self):
         prompt = self.input.text().strip()
@@ -171,6 +110,7 @@ class AssistantPanel(QWidget):
             return
         self.input.clear()
         self.append('You', prompt)
+        self.submitted.emit(prompt)
         self.results.clear()
         self.results.hide()
         self.web_button.hide()
@@ -186,7 +126,7 @@ class AssistantPanel(QWidget):
 
     def show_result(self, result):
         self.set_busy(False)
-        self.append('Nook', result['text'])
+        self.append('Snippy', result['text'])
         self.results.clear()
         for path in result.get('files', []):
             item = QListWidgetItem(Path(path).name + '\n' + path)
@@ -201,13 +141,15 @@ class AssistantPanel(QWidget):
         self.confirm_query = result.get('confirm_web', '')
         self.web_button.setText('Look up this public topic online' if self.confirm_query else 'Search the wider web in your browser')
         self.web_button.setVisible(bool(self.web_query or self.confirm_query))
+        self.response_ready.emit(result)
         if self.notch.store.settings['speak_replies']:
             self.notch.run_job('speech-output', lambda: assistant.speak(result['text']), lambda _: None,
                                lambda message: self.status.setText(message))
 
     def failed(self, message):
         self.set_busy(False, 'Check the connection in Settings → Assistant')
-        self.append('Nook', message)
+        self.append('Snippy', message)
+        self.response_ready.emit({'text': message, 'error': True})
 
     def open_result(self, item):
         kind, target = item.data(Qt.UserRole)
@@ -232,5 +174,5 @@ class AssistantPanel(QWidget):
         def done(text):
             self.set_busy(False, 'Review your words, then press Send.' if text else 'No speech heard. Try again.')
             self.input.setText(text)
-            self.input.setFocus()
+            self.voice_ready.emit(text)
         self.notch.run_job('speech-input', assistant.listen, done, self.failed)

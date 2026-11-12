@@ -4,7 +4,7 @@ A local, customisable notch at the centre of the top edge of a selected display.
 
 ## Run
 
-Open `dist/Nook/Nook.exe`, or double-click `launch.cmd`. Keep the entire `dist/Nook` folder together. Right-click the notch or use its tray icon to open Settings or quit. Double-click the tray icon to open Settings. Escape collapses the notch. The default Music panel is 760 × 174 logical pixels. Unpinning returns to the full music and calendar view, with artwork and controls always visible. An animated cloud companion floats beside the right edge. Expansion takes 150 ms; contraction takes 120 ms after a default 90 ms leave delay. Preview pins the notch open.
+Open `dist/Snippy/Nook/Nook.exe`, or double-click `launch.cmd`. Keep the entire `dist/Snippy/Nook` folder together. Quit an older running copy first using its tray menu. Right-click the notch or use its tray icon to open Settings or quit. Double-click the tray icon to open Settings. Escape collapses the notch. The default Music panel is 640 × 150 logical pixels. Unpinning returns to the music and calendar view while a song is playing or paused. With no track available, the music section disappears and the first two enabled non-music widgets fill the space. Drag the widget order in Settings to choose this idle layout. An animated cloud companion floats beside the right edge. Expansion takes 150 ms; contraction takes 120 ms after a default 90 ms leave delay. Preview pins the notch open.
 
 ## Appearance templates
 
@@ -14,13 +14,17 @@ Clock tiles offer Numeral, Analog, Bold analog, World row and World grid faces t
 
 ## Desktop widgets
 
-Settings → Desktop adds individual Clock, Music, To do, Weather, Calendar, Note and Photo tiles, or a ready-made three-tile layout. Drag a tile by its heading. Its ··· menu changes Glass, Paper or Midnight style, locks positions, or removes the widget. Positions, tasks, notes and photo choices persist locally. Tiles sit behind normal application windows and are independent of notch pinning. Glass uses transparency, not an operating-system blur effect. Desktop behaviour after Explorer restarts, Show Desktop, or virtual-desktop changes has not been validated.
+Settings → Desktop adds individual Clock, Music, To do, Weather, Calendar, Note and Photo tiles, or a ready-made three-tile layout. Tiles have no headings. Drag their outer margin; hover to reveal the ··· menu, or right-click. The menu changes Glass, Paper or Midnight style, locks positions, or removes the widget. Positions, tasks, notes and photo choices persist locally. Tiles sit behind normal application windows and are independent of notch pinning. Glass uses transparency, not an operating-system blur effect. Desktop behaviour after Explorer restarts, Show Desktop, or virtual-desktop changes has not been validated.
 
-Music and tasks share data with the notch. Weather needs a city in Connections. Calendar shows imported deadlines for today and upcoming connected Google Calendar events. Photo tiles use images selected from the PC. A maximum of 20 desktop tiles prevents accidental unbounded creation.
+Music and tasks share data with the notch. Weather needs a city in Connections. Calendar shows imported deadlines for today and upcoming connected Google Calendar events. Photo tiles crop images to fill a rounded frame. Once a photo is chosen, change it through the widget menu. A maximum of 20 desktop tiles prevents accidental unbounded creation.
 
-## Nook assistant
+## Snippy assistant
 
-Select the animated companion in the notch. Type a message or press Talk for one Windows speech recognition session, review the recognised text, then Send. Read replies aloud is optional in Settings → Assistant. Voice requires a working default microphone, Windows desktop microphone permission and an installed Windows speech language. Speech input and output run locally. Dictation is bounded by a timeout and never listens continuously.
+On first launch, Snippy asks for your name and saves it locally. Change it in Settings → Assistant. Click the small smiling cloud beside the notch to reveal a white quick input. Enter sends your request; a speech bubble shows the reply. The cloud drifts while a request is running and returns beside the notch when it finishes. Open chat enters the blue-sky fullscreen workspace; Escape returns to the desktop. Four exchanges or a reply longer than 500 characters also opens fullscreen. Both views share one conversation.
+
+Fullscreen greetings rotate through casual prompts and the appropriate time greeting: morning 06:00–12:00, afternoon 12:01–16:00, evening 16:01–18:00, and a late-night greeting outside those hours. The name and rotation position persist, while chat messages stay in memory only. After 60 seconds without typing or a running request, Snippy sleeps, slows its animation, and shuts down its owned Ollama service and child processes. A new request starts it again. Disabling animation also disables cloud roaming.
+
+In fullscreen, type a message or press Talk for one Windows speech recognition session, review the recognised text, then Send. Read replies aloud is optional in Settings → Assistant. Voice requires a working default microphone, Windows desktop microphone permission and an installed Windows speech language. Speech input and output run locally. Dictation is bounded by a timeout and never listens continuously.
 
 Without an AI model, these commands already work:
 
@@ -31,6 +35,16 @@ Without an AI model, these commands already work:
 Ollama 0.40.16 and qwen3:0.6b are bundled inside the portable app folder. Open the companion and send a message to start local AI automatically. No separate installation or model download is needed by the end user. The service binds to 127.0.0.1:11435 and requests model unloading after each response. The runtime and model significantly increase the distribution size. Small models have limited reasoning quality.
 
 The model can answer or request bounded maths, filename search and Wikipedia tools. A model-proposed online lookup requires pressing the visible lookup button. Explicit `/web` or `look up` commands run directly. No shell execution, file editing, file-content reading or account access is granted to the model. Chat text stays in process memory and clears when the app closes. Public lookup topics go to Wikipedia; filenames and file contents are not uploaded. This is a small assistant, not a full autonomous desktop-control agent.
+
+## Snippy notification alerts
+
+Settings → Assistant → Connect notifications requests Windows notification-listener access. Alerts are off by default. Once allowed, Nook checks for new Windows toast notifications every five seconds, ignores the existing notification-centre backlog, and announces new arrivals through Snippy. Choose all apps or a comma-separated app-name filter. Message previews are optional. The last 20 alerts stay in RAM only and never enter chat history, model prompts, logs or external services. Alerts do not load Ollama. Turn off announcements to stop polling and clear this list.
+
+This covers apps that actually publish Windows notifications, including supported/configured chat apps. It cannot detect silent in-app messages, read chat databases or infer that an AI task finished. Browser notifications may be attributed to the browser. App-specific notification delivery and Windows focus settings still apply.
+
+**Windows setup:** the portable Python process currently reports notification access denied on the development machine. The build includes `AppxManifest.xml`, assets and `Register-Nook.ps1` for optional development registration with the required capability. For this unsigned development build, enable Windows Developer Mode yourself, quit the portable Nook copy, run `Register-Nook.ps1` from the complete built Nook folder in Windows PowerShell, then launch **Nook from Start** and select **Connect notifications**. The helper registers only Nook; it does not enable Developer Mode, modify other apps or grant notification permission. Keep the registered folder in place. This registration path and live cross-app delivery have not yet been validated on this machine; source/UI behaviour is tested with synthetic notifications. A signed production installer remains pending.
+
+References: [Microsoft notification listener](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/app-notifications/notification-listener), [development app registration](https://learn.microsoft.com/en-us/windows/apps/develop/testing/loose-file-registration).
 
 ## Features and connection status
 

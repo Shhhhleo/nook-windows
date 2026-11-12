@@ -9,7 +9,9 @@ from nook.ui import Notch, STYLE
 
 
 def main():
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Nook.Windows')
+    length = ctypes.c_uint32()
+    if ctypes.windll.kernel32.GetCurrentPackageFullName(ctypes.byref(length), None) == 15700:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Nook.Windows')
     app = QApplication(sys.argv)
     app.setApplicationName('Nook')
     app.setQuitOnLastWindowClosed(False)
@@ -25,7 +27,9 @@ def main():
     sys.excepthook = report
     notch = Notch(Store())
     notch.show()
-    if '--settings' in sys.argv:
+    if not notch.store.settings.get('user_name'):
+        QTimer.singleShot(300, notch.cloud.onboard)
+    elif '--settings' in sys.argv:
         QTimer.singleShot(300, notch.open_settings)
     result = app.exec()
     notch.search_cancel.set()
