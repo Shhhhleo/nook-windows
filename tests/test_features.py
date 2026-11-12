@@ -34,7 +34,8 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual(len(found['files']), 1)
             self.assertNotIn('private contents', json.dumps(found))
             self.assertEqual(assistant.respond('what is 20 * 5?', [], settings)['text'], '20 * 5 = 100')
-            self.assertIn('Ollama', assistant.respond('hello', [], settings)['text'])
+            with patch.object(assistant, 'models', return_value=['qwen3:0.6b']), patch.object(assistant, 'ollama_request', return_value={'message': {'content': '{"action":"answer","argument":"Hello"}'}}):
+                self.assertEqual(assistant.respond('hello', [], settings)['text'], 'Hello')
 
     def test_model_web_lookup_requires_visible_action(self):
         settings = {'search_root': '.', 'ollama_model': 'test:local'}
@@ -88,12 +89,13 @@ class DesktopTests(unittest.TestCase):
         settings.apply_preset(PRESETS['Focus'])
         self.assertIs(notch.assistant_panel, panel)
         self.assertEqual(panel.input.text(), 'Unsent message')
-        self.assertEqual(notch.width(), PRESETS['Focus']['width'])
+        self.assertEqual(notch.width(), notch.target_geometry().width())
         self.assertEqual(notch.height(), PRESETS['Focus']['music_height'])
         for identity in list(notch.desktop.windows):
             notch.desktop.remove(identity)
         self.assertFalse(notch.desktop.timer.isActive())
         notch.pool.waitForDone(10000)
         notch.tray.hide()
+        notch.cloud.close()
         notch.deleteLater()
         app.processEvents()

@@ -4,11 +4,13 @@ A local, customisable notch at the centre of the top edge of a selected display.
 
 ## Run
 
-Open `dist/Nook/Nook.exe`, or double-click `launch.cmd`. Keep the entire `dist/Nook` folder together. Right-click the notch or use its tray icon to open Settings or quit. Double-click the tray icon to open Settings. Escape collapses the notch. The default Music panel is 560 × 174 logical pixels, with a 420 × 58 resting strip that retains artwork, title and artist while playing or paused. Expansion takes 150 ms; contraction takes 120 ms after a default 90 ms leave delay. Preview pins the notch open.
+Open `dist/Nook/Nook.exe`, or double-click `launch.cmd`. Keep the entire `dist/Nook` folder together. Right-click the notch or use its tray icon to open Settings or quit. Double-click the tray icon to open Settings. Escape collapses the notch. The default Music panel is 760 × 174 logical pixels. Unpinning returns to the full music and calendar view, with artwork and controls always visible. An animated cloud companion floats beside the right edge. Expansion takes 150 ms; contraction takes 120 ms after a default 90 ms leave delay. Preview pins the notch open.
 
 ## Appearance templates
 
 Settings → Appearance offers Everyday, Focus and Studio presets. One click applies the sizes and previews the notch. Fine-tuning is hidden until requested. Import or save a `.json` template to share an appearance. Downloadable copies are in `templates/` in this repository, accessible through the Template downloads button (GitHub sign-in is required for this private repository). Templates contain only validated appearance values, never account credentials or personal data. They cannot execute code. Existing original default dimensions are migrated to the new compact layout.
+
+Clock tiles offer Numeral, Analog, Bold analog, World row and World grid faces through the Desktop gallery and each tile’s Clock face menu. World clocks use timezone data for daylight-saving changes. Music uses a vinyl record presentation and Notes have ruled lines.
 
 ## Desktop widgets
 
@@ -26,7 +28,7 @@ Without an AI model, these commands already work:
 - `find files report` or `find my invoice.pdf` for filename search in the Behaviour search folder. Activate a result to open its containing folder.
 - `look up solar energy` or `/web solar energy` for live Wikipedia search results with source links. A button opens a wider search in the browser. This is not a general web crawling service.
 
-For conversation, install [Ollama for Windows](https://ollama.com/download/windows) and a local model, then use Find installed models in Settings → Assistant and save the selection. A small starter option is `ollama pull qwen3:0.6b` (approximately 523 MB download, with additional runtime memory). Nook does not download models automatically. It only contacts Ollama on `127.0.0.1:11434`, excludes cloud model entries, limits context and output, and requests unloading after each response. Small models have limited reasoning quality and may require a clearer prompt.
+Ollama 0.40.16 and qwen3:0.6b are bundled inside the portable app folder. Open the companion and send a message to start local AI automatically. No separate installation or model download is needed by the end user. The service binds to 127.0.0.1:11435 and requests model unloading after each response. The runtime and model significantly increase the distribution size. Small models have limited reasoning quality.
 
 The model can answer or request bounded maths, filename search and Wikipedia tools. A model-proposed online lookup requires pressing the visible lookup button. Explicit `/web` or `look up` commands run directly. No shell execution, file editing, file-content reading or account access is granted to the model. Chat text stays in process memory and clears when the app closes. Public lookup topics go to Wikipedia; filenames and file contents are not uploaded. This is a small assistant, not a full autonomous desktop-control agent.
 
@@ -64,6 +66,7 @@ python -m venv .venv
 python -m pip --python .venv/Scripts/python.exe install -r requirements.txt pyinstaller
 .venv/Scripts/python.exe main.py --settings
 .venv/Scripts/python.exe -m unittest discover -s tests -v
+./prepare-ai.ps1
 ./build.ps1
 ```
 

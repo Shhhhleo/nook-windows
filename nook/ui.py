@@ -16,7 +16,8 @@ from .visuals import media_icon, AlbumArt, TrackLabel, WeekStrip, TemplatePrevie
 from . import services
 from .storage import WIDGETS
 from .presets import PRESETS, DESCRIPTIONS, read_template, write_template
-from .chat_ui import Companion, AssistantPanel
+from .chat_ui import Companion, AssistantPanel, CloudCompanion
+from .clocks import ClockFace, DESIGNS
 from .desktop import DesktopManager, KINDS
 from . import assistant
 
@@ -267,6 +268,13 @@ class Settings(QWidget):
         row.addWidget(button('Add to desktop', lambda: self.add_desktop(self.desktop_kind.currentText())))
         layout.addLayout(row)
         layout.addWidget(label('Ready-made desktop layouts', 'section'))
+        gallery = QGridLayout()
+        for index, design in enumerate(DESIGNS):
+            preview = ClockFace(design)
+            preview.setFixedSize(150, 110)
+            gallery.addWidget(preview, (index // 3)*2, index % 3)
+            gallery.addWidget(button(design, lambda checked=False, d=design: self.notch.desktop.add('Clock', design=d)), (index // 3)*2+1, index % 3)
+        layout.addLayout(gallery)
         for name in ('Focus desk', 'Music desk', 'Daily desk'):
             layout.addWidget(button('Add ' + name, lambda checked=False, n=name: self.add_desktop_layout(n)))
         layout.addWidget(label('Glass is translucent, Paper is soft and light, Midnight is dark. Layouts add three tiles without removing your existing ones.', 'muted', True))
@@ -301,18 +309,17 @@ class Settings(QWidget):
     def assistant_page(self):
         layout = self.page('Assistant')
         layout.addWidget(label('A little company. Entirely local AI.', 'section'))
-        layout.addWidget(label('Connect an installed Ollama model for conversation. Maths, filename search and Wikipedia lookup work without a model. Voice uses Windows speech and listens only when you press Talk.', 'muted', True))
+        layout.addWidget(label('Local AI is included with Nook and starts when you send a message. Voice uses Windows speech and listens when you press Talk.', 'muted', True))
         form = QFormLayout()
-        self.model_field = self.field(form, 'ollama_model', 'Local model', 'combo', choices=[self.store.settings['ollama_model'] or ''])
+        self.model_field = self.field(form, 'ollama_model', 'Local model', 'combo', choices=[self.store.settings['ollama_model'] or 'qwen3:0.6b'])
         self.field(form, 'speak_replies', 'Read replies aloud', 'check')
         layout.addLayout(form)
         row = QHBoxLayout()
-        row.addWidget(button('Find installed models', self.find_models))
-        row.addWidget(button('Get Ollama', lambda: open_url('https://ollama.com/download/windows')))
+        row.addWidget(button('Check bundled AI', self.find_models))
         layout.addLayout(row)
-        self.model_status = label('Ollama connects only to this PC. No cloud API key is needed.', 'muted', True)
+        self.model_status = label('Ollama and the starter model are included in the app folder.', 'muted', True)
         layout.addWidget(self.model_status)
-        layout.addWidget(label('For a small starter model, install Ollama and run: ollama pull qwen3:0.6b. Then select Find installed models. Model memory is additional to Nook; it unloads after each reply.', 'muted', True))
+        layout.addWidget(label('The starter model unloads after each reply to release memory. Keep the complete Nook folder together when moving the app.', 'muted', True))
         layout.addWidget(label('Messages stay in memory until cleared or Nook closes. File search uses the folder selected in Behaviour. It finds filenames and opens their folders. It does not upload or edit files. Web lookup sends the search topic to Wikipedia.', 'muted', True))
         layout.addWidget(button('Open assistant', self.notch.open_assistant))
         layout.addStretch()
@@ -327,7 +334,7 @@ class Settings(QWidget):
                 self.model_field.setCurrentText(current)
             self.model_status.setText('Choose a model, then Save settings.' if names else 'Ollama is running but no local models are installed.')
         self.notch.run_job('ollama-models', assistant.models, done,
-            lambda _: self.model_status.setText('Ollama is not available. Install or start Ollama, then try again.'))
+            lambda _: self.model_status.setText('Bundled AI could not start. Check that the complete Nook folder is present.'))
 
     def choose_color(self, field):
         color = QColorDialog.getColor(QColor(field.text()), self)
@@ -552,6 +559,17 @@ class Notch(QWidget):
         QApplication.instance().screenRemoved.connect(lambda *_: self.reposition())
         self.rebuild()
         self.desktop = DesktopManager(self)
+        self.cloud = CloudCompanion(self)
+        self.cloud.follow()
+        self.cloud.show()
+
+    def moveEvent(self, event):
+        if hasattr(self, 'cloud'):
+            self.cloud.follow()
+
+    def resizeEvent(self, event):
+        if hasattr(self, 'cloud'):
+            self.cloud.follow()
 
     def run_job(self, key, work, done, failed=None):
         if key in self.jobs:
@@ -589,9 +607,9 @@ class Notch(QWidget):
         screens = QApplication.screens()
         screen = screens[min(max(0, self.store.settings['screen']), len(screens) - 1)]
         bounds = screen.geometry()
-        width = min(self.store.settings['width' if self.expanded else 'compact_width'], bounds.width() - 20)
+        width = min(self.store.settings['width'], bounds.width() - 110)
         expanded_height = self.store.settings['music_height'] if self.view == 'Music' else self.store.settings['height']
-        height = min(expanded_height, bounds.height() - 40) if self.expanded else self.store.settings['compact_height']
+        height = min(expanded_height if self.expanded else self.store.settings['music_height'], bounds.height() - 40)
         return QRect(bounds.x() + (bounds.width() - width) // 2, bounds.y(), width, height)
 
     def reposition(self, *_):
@@ -606,14 +624,15 @@ class Notch(QWidget):
         if not expanded:
             self.pinned = False
             self.pin.setIcon(media_icon('pin'))
+            self.switch_view('Music')
         if self.expanded == expanded:
             return
         self.expanded = expanded
         self.update_clock()
         self.animation.stop()
         self.body.setVisible(True)
-        self.body.setFixedSize(self.target_geometry().width() - 40 if expanded else self.store.settings['width'] - 40,
-                               self.target_geometry().height() - self.header.height() - 20 if expanded else self.body.height())
+        self.body.setFixedSize(self.target_geometry().width() - 40,
+                               self.target_geometry().height() - self.header.height() - 18)
         if self.store.settings['animation']:
             self.animation.setDuration(150 if expanded else 120)
             self.animation.setStartValue(self.geometry())
@@ -625,7 +644,9 @@ class Notch(QWidget):
         self.update_clock()
 
     def animation_finished(self):
-        self.body.setVisible(self.expanded)
+        self.body.setVisible(True)
+        self.body.setMinimumSize(0, 0)
+        self.body.setMaximumSize(16777215, 16777215)
         if self.expanded:
             self.body.setMinimumSize(0, 0)
             self.body.setMaximumSize(16777215, 16777215)
@@ -763,10 +784,12 @@ class Notch(QWidget):
                 size = {'Minimal': 22, 'Large': 30, 'Editorial': 26}[self.store.settings['clock_style']]
                 self.time_label.setFont(QFont(self.store.settings['font'], size))
                 self.time_label.setStyleSheet('font-family: "%s"; font-size: %spx; color: #f5f5f7;' % (self.store.settings['font'], size))
-                layout.addWidget(self.time_label)
+                calendar_header = QHBoxLayout()
+                calendar_header.addWidget(self.time_label)
+                calendar_header.addWidget(WeekStrip(), 1)
+                layout.addLayout(calendar_header)
                 self.date_label = label('', 'muted', True)
                 layout.addWidget(self.date_label)
-                layout.addWidget(WeekStrip())
                 layout.addStretch()
             elif name == 'To do':
                 self.todo_layout = layout
@@ -803,6 +826,7 @@ class Notch(QWidget):
         if self.assistant_panel is None:
             self.assistant_panel = AssistantPanel(self)
         self.body_layout.addWidget(self.assistant_panel, 1)
+        self.body.show()
         self.switch_view(self.view)
         self.reposition()
         self.update_clock()
@@ -819,7 +843,7 @@ class Notch(QWidget):
         self.search_results.setVisible(name == 'Files')
         self.scroll.setVisible(name in ('Music', 'Widgets'))
         self.assistant_panel.setVisible(name == 'Assistant')
-        self.assistant_button.setVisible(name != 'Assistant')
+        self.assistant_button.hide()
         self.message.setVisible(name == 'Files' or bool(self.store.warning))
         if name == 'Files':
             self.search_input.setFocus()
@@ -829,15 +853,18 @@ class Notch(QWidget):
     def build_music(self, layout):
         row = QHBoxLayout()
         row.setSpacing(10)
-        self.artwork = AlbumArt(64)
+        self.artwork = AlbumArt(88)
         row.addWidget(self.artwork)
         details = QVBoxLayout()
         details.setSpacing(2)
         self.track = TrackLabel('Nothing playing')
         self.track.setStyleSheet('font-size: 13px; font-weight: 600;')
         self.artist = TrackLabel('Start Spotify or Apple Music')
+        self.album = TrackLabel('')
+        self.album.setStyleSheet('font-size: 12px; color: #b8b8bd;')
         self.artist.setStyleSheet('color: #939397; font-size: 12px;')
         details.addWidget(self.track)
+        details.addWidget(self.album)
         details.addWidget(self.artist)
         row.addLayout(details, 1)
         self.players = QComboBox()
@@ -859,6 +886,9 @@ class Notch(QWidget):
         progress.addWidget(self.progress, 1)
         progress.addWidget(self.remaining)
         layout.addLayout(progress)
+        self.elapsed.hide()
+        self.remaining.hide()
+        self.progress.hide()
         controls = QHBoxLayout()
         controls.setSpacing(8)
         self.media_buttons = {}
@@ -938,7 +968,7 @@ class Notch(QWidget):
         if not self.store.settings['hour24']:
             text = text.lstrip('0') + now.strftime(' %p')
         self.clock.setText(text if 'Time' in self.store.settings['enabled'] else '')
-        compact_visible = not self.expanded or self.view != 'Music'
+        compact_visible = self.view != 'Music'
         self.header.setFixedHeight((38 if self.expanded else self.store.settings['compact_height'] - 12) if compact_visible else 6)
         self.clock.setVisible(compact_visible)
         active = bool(self.media_state.get('source')) and 'Music' in self.store.settings['enabled']
@@ -948,12 +978,16 @@ class Notch(QWidget):
         self.compact_artist.setVisible(compact_visible)
         self.compact_art.setVisible(active and compact_visible)
         self.compact_state.setVisible(active and compact_visible)
-        self.companion.setVisible(not self.expanded)
+        self.companion.hide()
         self.compact_state.setPixmap(media_icon('wave' if self.media_state.get('playing') else 'pause', '#a6a6ac').pixmap(16, 16))
         self.update_progress()
         if 'Time' in self.store.settings['enabled']:
-            self.time_label.setText(text)
-            self.date_label.setText(now.strftime('%B'))
+            self.time_label.setText(now.strftime('%b'))
+            today = now.strftime('%Y-%m-%d')
+            deadlines = [r['title'] for r in self.store.settings['deadlines'] if r['due'][:10] == today]
+            events = self.widget_data.get('Google Calendar', [])
+            titles = deadlines + ([r[0] for r in events[:1]] if isinstance(events, list) else [])
+            self.date_label.setText(titles[0] if titles else 'Nothing scheduled' if self.store.secret('google_tokens') or self.store.settings['deadlines'] else 'Connect your calendar')
 
     def update_progress(self):
         if 'Music' not in self.store.settings['enabled'] or not hasattr(self, 'progress'):
@@ -993,6 +1027,7 @@ class Notch(QWidget):
                 return
             self.track.setText(state['title'])
             self.artist.setText(state['artist'])
+            self.album.setText(state.get('album', ''))
             self.media_buttons['play'].setIcon(media_icon('pause' if state.get('playing') else 'play'))
             repeat = state.get('repeat', 0)
             self.media_buttons['repeat'].setIcon(media_icon('repeat-one' if repeat == 1 else 'repeat', self.store.settings['accent'] if repeat else '#88888e'))

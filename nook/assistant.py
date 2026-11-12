@@ -13,8 +13,9 @@ import urllib.request
 from pathlib import Path
 
 from . import services
+from . import local_ai
 
-OLLAMA = 'http://127.0.0.1:11434'
+OLLAMA = 'http://127.0.0.1:11435'
 OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
        ast.Div: operator.truediv, ast.Mod: operator.mod, ast.Pow: operator.pow}
 
@@ -46,6 +47,7 @@ def calculate(expression):
 
 
 def ollama_request(path, payload=None, timeout=90):
+    local_ai.ensure_running()
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(OLLAMA + path, data, {'Content-Type': 'application/json'})
     # Do not send local prompts through a system proxy.
@@ -111,7 +113,7 @@ def respond(prompt, history, settings):
             return run_tool(tool, match[1].rstrip('?'), root)
     if re.fullmatch(r'[\d\s.+\-*/%()^×÷]+', prompt):
         return run_tool('calculate', prompt, root)
-    model = settings.get('ollama_model', '')
+    model = settings.get('ollama_model') or local_ai.MODEL
     if not model:
         return {'text': 'Connect an installed Ollama model in Settings → Assistant for conversation. '
                 'I can already calculate, find files and look up topics online. '
@@ -132,7 +134,7 @@ def respond(prompt, history, settings):
               'enum': ['answer', 'calculate', 'find_files', 'web_lookup']},
               'argument': {'type': 'string'}}, 'required': ['action', 'argument']}
     response = ollama_request('/api/chat', {'model': model, 'messages': messages, 'stream': False,
-                              'format': schema, 'keep_alive': 0,
+                              'format': schema, 'keep_alive': 0, 'think': False,
                               'options': {'num_ctx': 4096, 'num_predict': 600, 'temperature': 0.2}})
     try:
         choice = json.loads(response['message']['content'])

@@ -110,8 +110,8 @@ class AlbumArt(QWidget):
 class WeekStrip(QWidget):
     def __init__(self):
         super().__init__()
-        self.setMinimumWidth(120)
-        self.setFixedHeight(36)
+        self.setMinimumWidth(180)
+        self.setFixedHeight(48)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -119,7 +119,7 @@ class WeekStrip(QWidget):
         today = datetime.now().date()
         start = today - timedelta(days=today.weekday())
         font = painter.font()
-        font.setPixelSize(9)
+        font.setPixelSize(11)
         painter.setFont(font)
         cell = self.width() / 7
         for i in range(7):
@@ -127,7 +127,28 @@ class WeekStrip(QWidget):
             painter.setPen(QColor('#72727a'))
             painter.drawText(QRectF(i*cell, 0, cell, 14), Qt.AlignCenter, day.strftime('%a')[0])
             painter.setPen(QColor('#64afff' if day == today else '#c0c0c7'))
-            painter.drawText(QRectF(i*cell, 16, cell, 18), Qt.AlignCenter, str(day.day))
+            painter.drawText(QRectF(i*cell, 22, cell, 22), Qt.AlignCenter, str(day.day).zfill(2))
+
+
+class VinylArt(AlbumArt):
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor('#18181c'))
+        painter.drawEllipse(QRectF(self.rect()))
+        painter.setPen(QPen(QColor('#35353b'), 1))
+        painter.setBrush(Qt.NoBrush)
+        for inset in range(6, self.width()//3, 5):
+            painter.drawEllipse(QRectF(self.rect()).adjusted(inset, inset, -inset, -inset))
+        inner = QRectF(self.rect()).adjusted(self.width()*.28, self.height()*.28, -self.width()*.28, -self.height()*.28)
+        path = QPainterPath()
+        path.addEllipse(inner)
+        painter.setClipPath(path)
+        if not self.cover.isNull():
+            painter.drawPixmap(inner.toRect(), self.cover)
+        else:
+            painter.fillRect(inner, QColor('#aaa3c9'))
 
 
 class TemplatePreview(QWidget):

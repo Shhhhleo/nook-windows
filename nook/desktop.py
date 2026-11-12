@@ -8,8 +8,9 @@ from PySide6.QtCore import Qt, QTimer, QUrl, QRectF, QSize
 from PySide6.QtGui import QPainter, QColor, QPen, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QCheckBox, QLineEdit, QMenu, QFileDialog, QTextEdit, QScrollArea)
-from .visuals import AlbumArt, TrackLabel, media_icon
+from .visuals import AlbumArt, TrackLabel, media_icon, VinylArt
 from .presets import THEMES
+from .clocks import ClockFace, DESIGNS
 
 KINDS = ('Clock', 'Music', 'To do', 'Weather', 'Calendar', 'Note', 'Photo')
 SIZES = {'Clock': (220, 180), 'Music': (240, 270), 'To do': (260, 280),
@@ -54,8 +55,12 @@ class DesktopTile(QWidget):
         self.content = QVBoxLayout()
         self.content.setSpacing(8)
         root.addLayout(self.content, 1)
-        if self.kind == 'Music':
-            self.art = AlbumArt(104)
+        if self.kind == 'Clock':
+            self.face = ClockFace(config.get('design', 'Numeral'))
+            self.resize(440, 180) if self.face.design == 'World row' else self.resize(220, 240)
+            self.content.addWidget(self.face, 1)
+        elif self.kind == 'Music':
+            self.art = VinylArt(120)
             self.content.addWidget(self.art, 0, Qt.AlignHCenter)
             self.title = TrackLabel('Nothing playing')
             self.title.setStyleSheet('font-weight: 600;')
@@ -78,6 +83,7 @@ class DesktopTile(QWidget):
         elif self.kind == 'To do':
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             holder = QWidget()
             self.tasks = QVBoxLayout(holder)
             self.tasks.setContentsMargins(0, 0, 0, 0)
@@ -141,6 +147,10 @@ class DesktopTile(QWidget):
         painter.setBrush(color)
         painter.setPen(QPen(QColor(255, 255, 255, 85), 1))
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 22, 22)
+        if self.kind == 'Note':
+            painter.setPen(QPen(QColor(128, 128, 128, 50), 1))
+            for y in range(67, self.height()-18, 25):
+                painter.drawLine(20, y, self.width()-20, y)
 
     def restore_position(self):
         screens = QApplication.screens()
@@ -169,6 +179,10 @@ class DesktopTile(QWidget):
 
     def options(self):
         menu = QMenu(self)
+        if self.kind == 'Clock':
+            faces = menu.addMenu('Clock face')
+            for design in DESIGNS:
+                faces.addAction(design, lambda d=design: self.set_design(d))
         styles = menu.addMenu('Style')
         for name in THEMES:
             styles.addAction(name, lambda n=name: self.set_theme(n))
@@ -178,6 +192,13 @@ class DesktopTile(QWidget):
         menu.addAction('Remove widget', lambda: self.manager.remove(self.config['id']))
         menu.exec(self.mapToGlobal(self.rect().topRight()))
 
+    def set_design(self, design):
+        self.config['design'] = design
+        self.face.design = design
+        self.resize(440, 180) if design == 'World row' else self.resize(220, 240)
+        self.face.update()
+        self.notch.store.save()
+
     def set_theme(self, name):
         self.config['theme'] = name
         self.notch.store.save()
@@ -186,10 +207,7 @@ class DesktopTile(QWidget):
     def refresh(self):
         now = datetime.now()
         if self.kind == 'Clock':
-            pattern = '%H:%M' if self.notch.store.settings['hour24'] else '%I:%M'
-            value = now.strftime(pattern)
-            self.large.setText(value if self.notch.store.settings['hour24'] else value.lstrip('0'))
-            self.detail.setText(now.strftime('%A\n%d %B'))
+            self.face.update()
         elif self.kind == 'Calendar':
             self.large.setText(now.strftime('%d').lstrip('0'))
             deadlines = self.notch.store.settings['deadlines']
@@ -230,7 +248,9 @@ class DesktopTile(QWidget):
                 if item.widget():
                     item.widget().deleteLater()
             for index, task in enumerate(tasks):
-                check = QCheckBox(task['text'])
+                check = QCheckBox()
+                check.setText(check.fontMetrics().elidedText(task['text'], Qt.ElideRight, self.width()-78))
+                check.setToolTip(task['text'])
                 check.setChecked(task.get('done', False))
                 check.toggled.connect(lambda value, i=index: self.toggle_task(i, value))
                 self.tasks.addWidget(check)
@@ -301,14 +321,14 @@ class DesktopManager:
         else:
             self.timer.stop()
 
-    def add(self, kind, x=None, y=None):
+    def add(self, kind, x=None, y=None, design=None):
         if len(self.windows) >= 20:
             return
         bounds = QApplication.primaryScreen().availableGeometry()
         offset = len(self.windows) % 5 * 28
         self.notch.store.settings['desktop_widgets'].append({'id': uuid.uuid4().hex, 'kind': kind,
             'x': bounds.x() + 24 + offset if x is None else x,
-            'y': bounds.y() + 80 + offset if y is None else y})
+            'y': bounds.y() + 80 + offset if y is None else y, 'design': design or 'Numeral'})
         self.notch.store.save()
         self.sync()
         self.notch.refresh_widgets()

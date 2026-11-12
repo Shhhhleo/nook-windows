@@ -3,11 +3,11 @@ import json
 from pathlib import Path
 
 PRESETS = {
-    'Everyday': dict(width=560, music_height=174, compact_width=420, compact_height=58,
+    'Everyday': dict(width=760, music_height=174, compact_width=420, compact_height=58,
                      height=390, radius=24, opacity=100, desktop_theme='Glass'),
-    'Focus': dict(width=500, music_height=168, compact_width=360, compact_height=52,
+    'Focus': dict(width=700, music_height=168, compact_width=360, compact_height=52,
                   height=360, radius=22, opacity=100, desktop_theme='Paper'),
-    'Studio': dict(width=620, music_height=184, compact_width=440, compact_height=62,
+    'Studio': dict(width=840, music_height=184, compact_width=440, compact_height=62,
                    height=430, radius=28, opacity=100, desktop_theme='Midnight'),
 }
 DESCRIPTIONS = {

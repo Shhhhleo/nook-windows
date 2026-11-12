@@ -9,11 +9,11 @@ DATA = Path(os.environ.get('NOOK_DATA_DIR', str(Path(os.environ['LOCALAPPDATA'])
 DATA.mkdir(parents=True, exist_ok=True)
 WIDGETS = ['Music', 'Time', 'To do', 'Weather', 'Google Calendar', 'Notion', 'Stocks',
            'Claude usage', 'Codex usage', 'Running tasks', 'Calls', 'Academia']
-DEFAULTS = dict(enabled=['Music', 'Time', 'To do'], order=WIDGETS, width=560,
+DEFAULTS = dict(enabled=['Music', 'Time', 'To do'], order=WIDGETS, width=760,
                 compact_width=420, compact_height=58, music_height=174,
                 height=390, radius=24, opacity=100, screen=0,
                 accent='#b7b0ff', font='Segoe UI', clock_style='Minimal', weather_style='Detailed',
-                hour24=False, seconds=False, animation=True, collapse_ms=90, ui_revision=3,
+                hour24=False, seconds=False, animation=True, collapse_ms=90, ui_revision=4,
                 city='', fahrenheit=False, symbols='AAPL, MSFT', search_root=str(Path.home()),
                 google_client_id='', google_client_secret='', todos=[], deadlines=[],
                 desktop_theme='Glass', desktop_widgets=[], desktop_locked=False,
@@ -58,6 +58,8 @@ class Store:
                         saved[key] = new
                 saved['ui_revision'] = 3
             self.settings.update(saved)
+            if saved.get('ui_revision', 1) < 4:
+                self.settings.update(width=760, music_height=174, ui_revision=4)
         except FileNotFoundError:
             pass
         except (ValueError, OSError):

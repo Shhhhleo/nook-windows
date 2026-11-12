@@ -98,7 +98,7 @@ async def media_async(action=None, preferred=''):
         finally:
             stream.close()
     controls = info.controls
-    return dict(title=props.title or 'Unknown track', artist=props.artist or session.source_app_user_model_id,
+    return dict(title=props.title or 'Unknown track', artist=props.artist or session.source_app_user_model_id, album=props.album_title,
                 playing=int(info.playback_status) == 4, repeat=int(info.auto_repeat_mode or 0),
                 position=position, duration=duration, artwork=artwork,
                 sessions=[s.source_app_user_model_id for s in sessions], source=session.source_app_user_model_id,

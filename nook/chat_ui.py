@@ -59,6 +59,33 @@ class Companion(QPushButton):
             painter.drawEllipse(QRectF(0.5, 0.5, 31, 31))
 
 
+class CloudCompanion(Companion):
+    def __init__(self, owner):
+        super().__init__(owner, owner.open_assistant, 88)
+        self.setFixedSize(88, 72)
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        bob = math.sin(self.phase)*3
+        painter.translate(0, bob)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor('#e8e8f6'))
+        for x, y, w, h in [(7, 36, 73, 24), (17, 26, 29, 30), (37, 24, 32, 34)]:
+            painter.drawEllipse(QRectF(x, y, w, h))
+        painter.setBrush(QColor('#aaa2e8'))
+        painter.drawRoundedRect(QRectF(30, 9, 29, 28), 12, 12)
+        painter.setBrush(QColor('#282139'))
+        for x in (38, 49):
+            painter.drawRoundedRect(QRectF(x, 19, 3, 6), 1.5, 1.5)
+
+    def follow(self):
+        bounds = self.owner.screen().geometry()
+        self.move(min(self.owner.geometry().right()+6, bounds.right()-self.width()), self.owner.y()+30)
+
+
 class AssistantPanel(QWidget):
     def __init__(self, notch):
         super().__init__()
@@ -71,7 +98,7 @@ class AssistantPanel(QWidget):
         head = QHBoxLayout()
         self.avatar = Companion(notch, self.focus_input, 32)
         head.addWidget(self.avatar)
-        self.status = QLabel('Local tools · Ollama when connected')
+        self.status = QLabel('Local AI · Ready')
         self.status.setTextFormat(Qt.PlainText)
         self.status.setWordWrap(True)
         self.status.setStyleSheet('color: #aaa5ba; font-size: 11px;')
