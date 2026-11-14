@@ -141,7 +141,7 @@ class SnippyTests(unittest.TestCase):
             self.assertFalse(self.snippy.bubble.isHidden())
             self.assertEqual(self.chat.input.text(), '')
             self.snippy.open_fullscreen()
-            self.assertIn('168', self.chat.transcript.toPlainText())
+            self.assertIn('168', self.chat.transcript_text())
             self.assertTrue(self.snippy.isHidden())
             self.chat.close()
             self.snippy.sleep()

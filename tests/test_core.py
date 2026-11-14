@@ -26,7 +26,7 @@ class CoreTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = QApplication([])
+        cls.app = QApplication.instance() or QApplication([])
 
     def test_encrypted_credentials_roundtrip(self):
         payload = b'example-test-secret'

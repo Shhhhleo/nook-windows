@@ -1,6 +1,7 @@
 """Snippy's compact desktop conversation and fullscreen workspace."""
 import html
 import math
+import re
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, QRectF, QPoint, QPropertyAnimation, QEasingCurve, QEvent
@@ -8,6 +9,14 @@ from PySide6.QtGui import QColor, QPainter, QPen, QPainterPath, QLinearGradient,
 from PySide6.QtWidgets import (QWidget, QPushButton, QLabel, QLineEdit, QVBoxLayout,
     QHBoxLayout, QFrame, QTextBrowser, QListWidget, QApplication, QComboBox, QMessageBox)
 from . import local_ai
+
+
+def plain(text):
+    """Readable plain text for the small bubble from a Markdown reply."""
+    text = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'\1', text)
+    text = re.sub(r'(\*\*|__|`)', '', text)
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.M)
+    return re.sub(r'^\s*[-*]\s+', '• ', text, flags=re.M)
 
 
 def greeting(name, now, index):
@@ -94,261 +103,6 @@ class CloudFace(QPushButton):
             painter.drawText(QRectF(73, 0, 25, 25), Qt.AlignCenter, 'z')
 
 
-class FullscreenChat(QWidget):
-    def __init__(self, snippy):
-        super().__init__()
-        self.snippy = snippy
-        self.owner = snippy.owner
-        self.error = ''
-        self.setWindowTitle('Snippy')
-        self.setObjectName('snippyWorkspace')
-        self.setStyleSheet('''QWidget#snippyWorkspace { color: #172738; }
-            QLabel { color: #172738; background: transparent; }
-            QLineEdit { background: white; color: #172738; border: 0; border-radius: 18px; padding: 18px; font-size: 16px; }
-            QPushButton { color: #24415e; background: rgba(255,255,255,160); border: 0; padding: 9px 15px; border-radius: 12px; }
-            QTextBrowser, QListWidget { color: #172738; background: rgba(255,255,255,225); border: 0; border-radius: 16px; padding: 14px; font-size: 15px; }''')
-        root = QVBoxLayout(self)
-        root.setContentsMargins(28, 20, 28, 28)
-        navigation = QHBoxLayout()
-        title = QLabel('Snippy')
-        title.setStyleSheet('font-size: 18px; font-weight: 600;')
-        navigation.addWidget(title)
-        self.library = QComboBox()
-        self.library.setAccessibleName('Saved conversations')
-        self.library.setMinimumWidth(200)
-        self.library.setMaximumWidth(320)
-        self.library.setStyleSheet('QComboBox { background: #eff6ff; color: #172738; padding: 7px; border: 0; border-radius: 10px; } QComboBox QAbstractItemView { background: white; color: #172738; selection-background-color: #cee4fc; }')
-        self.library.activated.connect(self.select_chat)
-        navigation.addWidget(self.library)
-        delete = QPushButton('Delete chat')
-        delete.clicked.connect(self.delete_chat)
-        navigation.addWidget(delete)
-        navigation.addStretch()
-        self.inbox_button = QPushButton('Notifications')
-        self.inbox_button.clicked.connect(self.toggle_inbox)
-        navigation.addWidget(self.inbox_button)
-        clear = QPushButton('New chat')
-        clear.clicked.connect(self.clear)
-        navigation.addWidget(clear)
-        close = QPushButton('Back to desktop')
-        close.clicked.connect(self.close)
-        navigation.addWidget(close)
-        root.addLayout(navigation)
-        root.addStretch(1)
-        self.center = QWidget()
-        self.center.setMaximumWidth(820)
-        self.center.setMinimumWidth(620)
-        content = QVBoxLayout(self.center)
-        self.content_layout = content
-        content.setSpacing(20)
-        self.face = CloudFace(self.owner, 100)
-        content.addWidget(self.face, 0, Qt.AlignHCenter)
-        self.heading = QLabel()
-        self.heading.setTextFormat(Qt.PlainText)
-        self.heading.setAlignment(Qt.AlignCenter)
-        self.heading.setWordWrap(True)
-        self.heading.setStyleSheet('font-size: 42px; font-weight: 600;')
-        content.addWidget(self.heading)
-        self.inbox = QListWidget()
-        self.inbox.setAccessibleName('Recent Windows notifications')
-        self.inbox.setMinimumHeight(100)
-        self.inbox.setMaximumHeight(180)
-        self.inbox.hide()
-        content.addWidget(self.inbox)
-        self.name_input = QLineEdit()
-        self.name_input.setMaxLength(40)
-        self.name_input.setPlaceholderText('Your name')
-        self.name_input.setAccessibleName('Your name')
-        self.name_input.returnPressed.connect(self.save_name)
-        content.addWidget(self.name_input)
-        self.continue_button = QPushButton('Meet Snippy')
-        self.continue_button.clicked.connect(self.save_name)
-        content.addWidget(self.continue_button)
-        self.transcript = QTextBrowser()
-        self.transcript.setOpenLinks(False)
-        self.transcript.setMinimumHeight(140)
-        self.transcript.setMaximumHeight(340)
-        content.addWidget(self.transcript)
-        self.results = QListWidget()
-        self.results.setMaximumHeight(130)
-        self.results.itemActivated.connect(self.owner.assistant_panel.open_result)
-        content.addWidget(self.results)
-        self.web = QPushButton('Look up this topic')
-        self.web.clicked.connect(self.owner.assistant_panel.web_action)
-        content.addWidget(self.web)
-        self.apply_button = QPushButton('Create this file')
-        self.apply_button.clicked.connect(self.owner.assistant_panel.apply_proposal)
-        self.apply_button.hide()
-        content.addWidget(self.apply_button)
-        row = QVBoxLayout()
-        row.setContentsMargins(12, 8, 12, 8)
-        row.setSpacing(0)
-        self.input = QLineEdit()
-        self.input.setMaxLength(4000)
-        self.input.setPlaceholderText('Ask Snippy to help…')
-        self.input.setAccessibleName('Message Snippy')
-        self.input.setMinimumHeight(50)
-        self.input.setStyleSheet('background: transparent; border: 0; padding: 10px; color: #172738; font-size: 16px;')
-        self.input.returnPressed.connect(self.send)
-        row.addWidget(self.input, 1)
-        self.voice = QPushButton('Talk')
-        self.voice.clicked.connect(self.owner.assistant_panel.listen)
-        controls = QHBoxLayout()
-        controls.addWidget(self.voice)
-        controls.addStretch()
-        self.send_button = QPushButton('Send')
-        self.send_button.clicked.connect(self.send)
-        controls.addWidget(self.send_button)
-        row.addLayout(controls)
-        self.composer = QWidget()
-        self.composer.setObjectName('snippyComposer')
-        self.composer.setStyleSheet('QWidget#snippyComposer { background: #fbfdff; border-radius: 24px; } QPushButton { background: #e8f0fa; padding: 5px 12px; border-radius: 12px; }')
-        self.composer.setLayout(row)
-        content.addWidget(self.composer)
-        self.status = QLabel('')
-        self.status.setAlignment(Qt.AlignCenter)
-        content.addWidget(self.status)
-        root.addWidget(self.center, 0, Qt.AlignHCenter)
-        root.addStretch(2)
-        QShortcut(QKeySequence('Escape'), self, activated=self.close)
-
-    def resizeEvent(self, event):
-        self.center.setMinimumWidth(min(760, max(280, self.width()-72)))
-        super().resizeEvent(event)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        gradient = QLinearGradient(0, 0, 0, self.height())
-        gradient.setColorAt(0, QColor('#70a8eb'))
-        gradient.setColorAt(1, QColor('#b9ddf4'))
-        painter.fillRect(self.rect(), gradient)
-        painter.setPen(Qt.NoPen)
-        for x, y, scale in [(-.08, .80, 1.0), (.24, .91, .42), (.73, .81, 1.05), (.56, .95, .50)]:
-            painter.save()
-            painter.translate(self.width()*x, self.height()*y)
-            factor = self.width()/1280*scale
-            painter.scale(factor, factor)
-            cloud = QPainterPath()
-            for rect in [(0, 48, 100, 84), (50, 22, 90, 98), (111, 0, 110, 128),
-                         (187, 32, 100, 102), (245, 64, 92, 72), (65, 75, 206, 90)]:
-                lobe = QPainterPath()
-                lobe.addEllipse(QRectF(*rect))
-                cloud = cloud.united(lobe)
-            shade = QLinearGradient(0, 0, 30, 170)
-            shade.setColorAt(0, QColor('#ffffff'))
-            shade.setColorAt(.48, QColor('#f2f7ff'))
-            shade.setColorAt(1, QColor('#b7d4ef'))
-            painter.setBrush(shade)
-            painter.drawPath(cloud)
-            painter.restore()
-
-    def prepare(self):
-        self.refresh_library()
-        known = bool(self.owner.store.settings.get('user_name'))
-        self.name_input.setVisible(not known)
-        self.continue_button.setVisible(not known)
-        self.composer.setVisible(known)
-        self.transcript.setVisible(known and bool(self.owner.assistant_panel.history))
-        self.results.setVisible(known and self.results.count() > 0)
-        engine = self.owner.assistant_panel
-        self.web.setVisible(known and bool(engine.web_query or engine.confirm_query))
-        if known:
-            settings = self.owner.store.settings
-            index = settings.get('greeting_index', 0)
-            self.heading.setText(greeting(settings['user_name'], datetime.now(), index))
-            settings['greeting_index'] = index + 1
-            self.owner.store.save()
-        else:
-            self.heading.setText('What should I call you?')
-        self.refresh_transcript()
-
-    def refresh_library(self):
-        engine = self.owner.assistant_panel
-        self.library.blockSignals(True)
-        self.library.clear()
-        self.library.addItem('Chat library', None)
-        for row in engine.archive.chats:
-            self.library.addItem(row['title'], row['id'])
-        self.library.setCurrentIndex(max(0, self.library.findData(engine.chat_id)))
-        self.library.blockSignals(False)
-
-    def select_chat(self, index):
-        if self.snippy.busy:
-            self.refresh_library()
-            return
-        identity = self.library.itemData(index)
-        if identity:
-            self.owner.assistant_panel.load_chat(identity)
-            self.error = ''
-            self.results.clear()
-            self.apply_button.hide()
-            self.prepare()
-
-    def delete_chat(self):
-        engine = self.owner.assistant_panel
-        if engine.busy or not engine.chat_id:
-            return
-        if QMessageBox.question(self, 'Delete conversation', 'Delete this saved conversation from this PC?') == QMessageBox.Yes:
-            engine.archive.delete(engine.chat_id)
-            self.clear()
-
-    def save_name(self):
-        name = self.name_input.text().strip()
-        if not name:
-            self.name_input.setFocus()
-            return
-        self.owner.store.settings['user_name'] = name
-        self.owner.store.save()
-        self.prepare()
-        self.input.setFocus()
-        self.snippy.prepare_model()
-
-    def toggle_inbox(self):
-        self.inbox.setVisible(not self.inbox.isVisible())
-        if self.inbox.isVisible() and not self.snippy.alerts:
-            self.inbox.clear()
-            self.inbox.addItem('No new notifications. Connect in Settings → Assistant.')
-
-    def refresh_transcript(self):
-        rows = self.owner.assistant_panel.history
-        self.face.setFixedSize(54 if rows else 100, 42 if rows else 78)
-        self.heading.setStyleSheet('font-size: %spx; font-weight: 600;' % (26 if rows else 42))
-        self.content_layout.setSpacing(12 if rows else 20)
-        self.transcript.setHtml(''.join('<p><b>%s</b><br>%s</p>' %
-            ('You' if row['role'] == 'user' else 'Snippy', html.escape(row['content']).replace('\n', '<br>')) for row in rows))
-        if self.error:
-            self.transcript.append(html.escape(self.error))
-            self.transcript.show()
-        bar = self.transcript.verticalScrollBar()
-        bar.setValue(bar.maximum())
-
-    def send(self):
-        if self.snippy.busy:
-            return
-        text = self.input.text().strip()
-        if text:
-            self.input.clear()
-            self.snippy.submit(text)
-
-    def clear(self):
-        if not self.snippy.busy:
-            self.owner.assistant_panel.clear_chat()
-            self.results.clear()
-            self.error = ''
-            self.prepare()
-
-    def closeEvent(self, event):
-        self.hide()
-        self.snippy.wake()
-        self.snippy.show()
-        self.snippy.follow()
-        if self.snippy.busy and self.owner.store.settings['animation']:
-            self.snippy.roam_timer.start()
-            self.snippy.roam()
-        event.ignore()
-
-
 class Snippy(QWidget):
     def __init__(self, owner):
         super().__init__()
@@ -415,7 +169,22 @@ class Snippy(QWidget):
         self.bubble.hide()
         self.expand_button.hide()
         self.composer.hide()
+        self.approve_row = QWidget()
+        approve_row = QHBoxLayout(self.approve_row)
+        approve_row.setContentsMargins(0, 0, 0, 0)
+        self.decline_button = QPushButton('Not now')
+        self.decline_button.clicked.connect(lambda: self.answer_approval(False))
+        approve_row.addWidget(self.decline_button)
+        self.approve_button = QPushButton('Approve')
+        self.approve_button.setStyleSheet('color: white; background: #1f4f8f; border: 0; padding: 5px; border-radius: 6px;')
+        self.approve_button.clicked.connect(lambda: self.answer_approval(True))
+        approve_row.addWidget(self.approve_button)
+        bubble.addWidget(self.approve_row)
+        self.approve_row.hide()
+        self.approval_request = None
+        from .workspace import FullscreenChat
         self.workspace = FullscreenChat(self)
+        owner.approvals.changed.connect(self.show_approval)
         self.motion = QPropertyAnimation(self, b'pos', self)
         self.motion.setDuration(1600)
         self.motion.setEasingCurve(QEasingCurve.InOutSine)
@@ -432,6 +201,7 @@ class Snippy(QWidget):
         engine.response_ready.connect(self.receive)
         engine.voice_ready.connect(self.voice_text)
         engine.partial.connect(self.streaming)
+        engine.progress.connect(self.progress)
         self.input.textEdited.connect(self.wake)
         self.workspace.input.textEdited.connect(self.wake)
         self.workspace.name_input.textEdited.connect(self.wake)
@@ -575,7 +345,9 @@ class Snippy(QWidget):
     def prepare_model(self):
         if self.model_prepared or 'snippy-prepare' in self.owner.jobs:
             return
-        from . import assistant
+        from . import assistant, brain
+        if brain.available(self.owner.store):
+            return  # Claude needs no local warm-up.
         self.model_prepared = True
         if not self.busy:
             self.workspace.status.setText('Preparing local AI…')
@@ -628,24 +400,77 @@ class Snippy(QWidget):
         self.reply_dismissed = False
         self.workspace.results.clear()
         self.workspace.web.hide()
-        self.workspace.transcript.show()
-        self.workspace.transcript.append('<p><b>You</b><br>' + html.escape(text) + '</p>')
+        self.workspace.add_user_message(text)
 
     def streaming(self, text):
         if not self.busy or self.reply_dismissed:
+            return
+        self.workspace.stream(text)
+        self.workspace.status.setText('Replying…')
+        if self.approval_request:
             return
         self.reply.setText(text[-320:])
         self.bubble.show()
         self.apply_button.hide()
         self.refresh_size()
-        self.workspace.status.setText('Replying… ' + text[-120:])
+
+    def progress(self, text):
+        self.workspace.status.setText(text)
+        if self.busy and not self.reply_dismissed and not self.approval_request:
+            self.reply.setText(text)
+            self.bubble.show()
+            self.refresh_size()
+
+    def show_approval(self):
+        request = self.owner.approvals.current()
+        self.approval_request = request
+        if not request:
+            self.approve_row.hide()
+            if not self.busy:
+                self.bubble.hide()
+            self.refresh_size()
+            return
+        if self.workspace.isVisible():
+            return  # The full-screen approval card handles it.
+        self.wake()
+        self.reply.setText(request['title'] + '\n\n' + request['detail'][:420])
+        labels = {'email': 'Send', 'file': 'Create', 'whatsapp': 'Send', 'whatsapp-draft': 'Send reply'}
+        self.approve_button.setText(labels.get(request['kind'], 'Approve'))
+        self.decline_button.setText('Skip' if request['kind'] == 'whatsapp-draft' else 'Not now')
+        self.details.setText('Review or edit in full screen')
+        self.details.show()
+        self.approve_row.show()
+        self.bubble.show()
+        self.show_input(True)
+        self.refresh_size()
+        self.follow()
+
+    def answer_approval(self, approved):
+        request = self.approval_request
+        if request:
+            self.approve_row.hide()
+            self.details.hide()
+            self.owner.approvals.answer(request, approved)
+
+    def announce(self, text):
+        """Short background updates (WhatsApp autopilot etc.). Never enters chat history."""
+        if self.busy or self.approval_request or self.workspace.isVisible():
+            return
+        self.wake()
+        self.reply.setText(text[:320])
+        self.details.hide()
+        self.apply_button.hide()
+        self.bubble.show()
+        self.refresh_size()
+        self.follow()
 
     def receive(self, result):
         self.showing_notifications = False
         self.details.setText('Open conversation')
         self.details.hide()
-        self.reply.setText(result['text'][:320] + ('…' if len(result['text']) > 320 else ''))
-        self.bubble.setVisible(not self.reply_dismissed)
+        text = plain(result['text'])
+        self.reply.setText(text[:320] + ('…' if len(text) > 320 else ''))
+        self.bubble.setVisible(not self.reply_dismissed or bool(self.approval_request))
         self.show_input(True)
         proposed = bool(result.get('proposal') or result.get('mcp_proposal'))
         self.apply_button.setText('Review app action' if result.get('mcp_proposal') else 'Review file')

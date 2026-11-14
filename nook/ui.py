@@ -367,7 +367,18 @@ class Settings(QWidget):
 
     def assistant_page(self):
         layout = self.page('Assistant')
-        layout.addWidget(label('A little company. Entirely local AI.', 'section'))
+        layout.addWidget(label('Snippy’s brain', 'section'))
+        layout.addWidget(label('Add a Claude API key from console.anthropic.com to give Snippy live web search, current news and the ability to act: open sites and apps, handle Gmail and WhatsApp, and pull Whop analytics. Usage is billed to your Anthropic account. Without a key, or when offline, Snippy uses the local AI below.', 'muted', True))
+        brain_form = QFormLayout()
+        from . import brain as brain_module
+        self.field(brain_form, 'anthropic_api_key', 'Claude API key', secret=True).setPlaceholderText('sk-ant-…')
+        self.field(brain_form, 'cloud_brain', 'Use Claude when a key is saved', 'check')
+        model = self.field(brain_form, 'claude_model_name', 'Claude model', 'combo', choices=list(brain_module.MODELS))
+        current = next((n for n, v in brain_module.MODELS.items() if v == brain_module.model_id(self.store)), 'Claude Opus 5.5')
+        model.setCurrentText(current)
+        self.form_card(layout, brain_form)
+        layout.addWidget(label('Opus is the most capable; Sonnet is faster and cheaper; Haiku is cheapest. Emails, WhatsApp messages and new files always wait for your approval.', 'muted', True))
+        layout.addWidget(label('Local AI and voice', 'section'))
         layout.addWidget(label('Local AI is included with Notch and starts when you send a message. Voice is recognised offline. Choose the accent and microphone that match your voice.', 'muted', True))
         form = QFormLayout()
         self.field(form, 'user_name', 'Your name').setMaxLength(40)
@@ -436,9 +447,28 @@ class Settings(QWidget):
         layout.addWidget(label('Windows location requires Windows permission. Forecasts are supplied by Open-Meteo, not the Windows Weather app. Units can also be changed on the widget. Google requires a Desktop OAuth client with the Calendar API enabled.', 'muted', True))
         layout.addWidget(button('Add or manage MCP apps', self.open_mcp))
         actions = QHBoxLayout()
-        actions.addWidget(button('Connect Google Calendar', self.connect_google))
+        actions.addWidget(button('Connect Google (Calendar + Gmail)', self.connect_google))
         actions.addWidget(button('Disconnect Google', self.disconnect_google))
         layout.addLayout(actions)
+        layout.addWidget(label('Gmail lets Snippy read your inbox and send emails you approve. In Google Cloud Console, enable the Gmail API for the same OAuth client and add yourself as a test user. Reconnect Google after updating to grant Gmail access.', 'muted', True))
+        layout.addWidget(label('Whop', 'section'))
+        whop = QFormLayout()
+        self.field(whop, 'whop_api_key', 'Whop API key', secret=True)
+        self.field(whop, 'whop_account_id', 'Whop account ID (optional, biz_…)')
+        self.form_card(layout, whop)
+        layout.addWidget(label('Create a key in your Whop dashboard → Developer → API keys with payment and member read access. Ask Snippy things like “How did Whop do this week?”.', 'muted', True))
+        layout.addWidget(label('WhatsApp', 'section'))
+        layout.addWidget(label('Snippy uses WhatsApp Web in a dedicated Microsoft Edge window. Sign in once by scanning the QR code. Choose the people Snippy manages: “Draft” asks you before each reply; “Auto” replies on its own (at most once every 45 seconds per person and 30 times an hour). Anything about money, commitments or emergencies is left for you. WhatsApp may limit accounts that automate heavily, so use Auto sparingly.', 'muted', True))
+        whatsapp_form = QFormLayout()
+        self.field(whatsapp_form, 'whatsapp_autopilot', 'Let Snippy manage the chats below', 'check')
+        self.form_card(layout, whatsapp_form)
+        row = QHBoxLayout()
+        row.addWidget(button('Open WhatsApp and sign in', self.open_whatsapp))
+        row.addWidget(button('Choose managed chats', self.manage_whatsapp))
+        layout.addLayout(row)
+        self.whatsapp_status = label(self.whatsapp_summary(), 'muted', True)
+        layout.addWidget(self.whatsapp_status)
+        self.notch.whatsapp.status.connect(self.whatsapp_status.setText)
         layout.addWidget(label('Academia deadlines', 'section'))
         layout.addWidget(label('Sign in on Academia in your browser. Automatic deadline sync requires an API from Academia. You can import a JSON deadline export here.', 'muted', True))
         row = QHBoxLayout()
@@ -499,7 +529,11 @@ class Settings(QWidget):
         self.store.settings['order'] = [item.text() for item in items]
         self.store.settings['enabled'] = [item.text() for item in items if item.checkState() == Qt.Checked]
         self.store.settings['screen'] = self.screen_combo.currentIndex()
+        from .brain import MODELS, DEFAULT_MODEL
+        self.store.settings['claude_model'] = MODELS.get(self.store.settings.get('claude_model_name'), DEFAULT_MODEL)
         self.store.save()
+        if self.store.settings.get('whatsapp_autopilot') and self.store.settings.get('whatsapp_contacts'):
+            self.notch.whatsapp.start()
         QApplication.instance().setStyleSheet(STYLE.replace('#b7b0ff', self.store.settings['accent']))
         self.notch.rebuild()
         self.notch.desktop.sync()
@@ -507,6 +541,29 @@ class Settings(QWidget):
         self.notch.notifications.configure()
         self.status.setText('Saved. Changes are live.')
         return True
+
+    def whatsapp_summary(self):
+        contacts = self.store.settings.get('whatsapp_contacts', [])
+        if not contacts:
+            return 'No managed chats yet.'
+        return 'Managed: ' + ', '.join('%s (%s)' % (c['name'], 'auto' if c.get('mode') == 'auto' else 'draft') for c in contacts)
+
+    def open_whatsapp(self):
+        self.whatsapp_status.setText('Opening WhatsApp in Edge… scan the QR code if asked.')
+        future = self.notch.whatsapp.submit('open')
+        def report():
+            if not future.done():
+                QTimer.singleShot(1000, report)
+                return
+            error = future.exception()
+            self.whatsapp_status.setText(str(error) if error else 'WhatsApp connected. ' + self.whatsapp_summary())
+        QTimer.singleShot(1000, report)
+
+    def manage_whatsapp(self):
+        from .contacts_ui import ContactsDialog
+        dialog = ContactsDialog(self.store, self)
+        if dialog.exec():
+            self.whatsapp_status.setText(self.whatsapp_summary())
 
     def open_mcp(self):
         from .connections_ui import ConnectionsDialog
@@ -649,12 +706,29 @@ class Notch(QWidget):
             screen.geometryChanged.connect(self.reposition)
         QApplication.instance().screenAdded.connect(lambda *_: self.reposition())
         QApplication.instance().screenRemoved.connect(lambda *_: self.reposition())
+        from .approvals import Approvals
+        from .whatsapp import WhatsApp
+        from .brain import Brain
+        self.approvals = Approvals()
+        self.whatsapp = WhatsApp(store)
+        self.brain = Brain(store, self.approvals, self.whatsapp)
+        self.whatsapp.brain = self.brain
         self.rebuild()
         self.desktop = DesktopManager(self)
         self.cloud = Snippy(self)
         self.cloud.follow()
         self.cloud.show()
         self.notifications = NotificationMonitor(self)
+        self.whatsapp.draft.connect(self.whatsapp_draft)
+        self.whatsapp.activity.connect(self.cloud.announce)
+        self.whatsapp.status.connect(self.cloud.announce)
+
+    def whatsapp_draft(self, draft):
+        def answered(approved, text):
+            if approved and text.strip():
+                self.whatsapp.submit('reply', draft['contact'], text.strip(), draft['key'])
+        self.approvals.post('whatsapp-draft', 'Reply to %s?\nThey wrote: %s' % (draft['contact'], draft['incoming'][:240]),
+                            draft['reply'], answered)
 
     def moveEvent(self, event):
         if hasattr(self, 'cloud'):

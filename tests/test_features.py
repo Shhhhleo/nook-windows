@@ -27,7 +27,8 @@ class AssistantTests(unittest.TestCase):
                 assistant.calculate(expression)
 
     def test_file_lookup_and_no_model_tools(self):
-        with tempfile.TemporaryDirectory() as directory:
+        # File search deliberately skips AppData, where the system temp folder lives.
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
             Path(directory, 'quarterly-report.txt').write_text('private contents')
             settings = {'search_root': directory, 'ollama_model': ''}
             found = assistant.respond('find files report', [], settings)

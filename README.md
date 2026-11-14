@@ -18,6 +18,18 @@ Settings → Desktop adds individual Clock, Music, To do, Weather, Calendar, Not
 
 Music and tasks share data with the notch. Weather uses a configured city or Windows location. Celsius/Fahrenheit buttons are on the widget. Forecasts come from Open-Meteo; this is not the Windows Weather app’s forecast feed. Calendar shows imported deadlines for today and upcoming connected Google Calendar events. Photo tiles crop images to fill a rounded frame. Once a photo is chosen, change it through the widget menu. A maximum of 20 desktop tiles prevents accidental unbounded creation.
 
+## Snippy's brain and actions (new)
+
+Add a Claude API key in **Settings → Assistant** (from console.anthropic.com). Snippy then runs on Claude (Opus 5.5 by default; Sonnet 5.5 or Haiku 5.5 selectable) with live web search and web page reading, so news, prices and other current facts come from the web with sources. Usage is billed to your Anthropic account. Without a key, or when the internet is down, Snippy falls back to the bundled local model. The request opts into Anthropic's server-side refusal fallback (`fallbacks: "default"`) on Opus and Sonnet.
+
+Snippy can act through tools: open websites and installed apps, find/read/create files in the cowork folder, manage to-dos, check weather and Google Calendar, search/read/send Gmail, read/send WhatsApp messages, and pull Whop analytics (revenue, payments, active/trialing/past-due/canceling and new memberships). **Emails, WhatsApp messages and new files always show an approval card first**; WhatsApp messages can be edited before sending. Content from web pages, emails and chats is treated as data, never instructions.
+
+- **Gmail:** Settings → Connections → Connect Google (Calendar + Gmail). Enable the Gmail API on the same Google Desktop OAuth client and add yourself as a test user. Existing Google connections must reconnect once to grant Gmail.
+- **Whop:** paste an API key (payment and member read access) and optionally your `biz_` account ID in Settings → Connections.
+- **WhatsApp:** Settings → Connections → Open WhatsApp and sign in. A dedicated Microsoft Edge window (separate profile in `%LOCALAPPDATA%\Nook\whatsapp-profile`) opens WhatsApp Web; scan the QR code once. **Choose managed chats** lists the people Snippy manages, each with *Draft* (Snippy prepares a reply and asks you) or *Auto* (Snippy replies itself, at most once per 45 seconds per person and 30 times an hour) plus personal instructions. Tick *Let Snippy manage the chats below* to start the autopilot, which checks unread managed chats every 15 seconds while Notch runs. Snippy leaves anything about money, commitments or emergencies for you. WhatsApp Web's layout changes occasionally; selectors live in `nook/whatsapp.py` (`SEL`). WhatsApp may restrict accounts that automate heavily, so use Auto sparingly.
+
+The full-screen workspace now has an animated sky (drifting parallax clouds, about 25 fps only while it is open and animations are on), a chat-library sidebar with search that can be pinned or hidden (button or Ctrl+B; hover the left edge to peek), chat bubbles with Markdown, and approval cards above the composer. Ctrl+N starts a new chat; right-click a chat to delete it.
+
 ## Snippy assistant
 
 On first launch a six-step setup asks for your name, display, accent, widgets, weather location/units, cowork folder, voice and notification preferences. Settings → Assistant can run setup again. Optional accounts connect afterwards.

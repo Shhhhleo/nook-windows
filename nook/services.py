@@ -16,6 +16,10 @@ from pathlib import Path
 import psutil
 from PySide6.QtCore import QObject, QRunnable, Signal
 
+GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar.readonly',
+                 'https://www.googleapis.com/auth/gmail.readonly',
+                 'https://www.googleapis.com/auth/gmail.send']
+
 
 class Signals(QObject):
     done = Signal(object)
@@ -238,7 +242,7 @@ def google_connect(store):
         server.timeout = 1
         redirect = 'http://127.0.0.1:%s/' % server.server_port
         query = urllib.parse.urlencode(dict(client_id=client, redirect_uri=redirect, response_type='code',
-            scope='https://www.googleapis.com/auth/calendar.readonly', access_type='offline', prompt='consent',
+            scope=' '.join(GOOGLE_SCOPES), access_type='offline', prompt='consent', include_granted_scopes='true',
             state=state, code_challenge=challenge, code_challenge_method='S256'))
         webbrowser.open('https://accounts.google.com/o/oauth2/v2/auth?' + query)
         end = time.monotonic() + 180
@@ -251,21 +255,14 @@ def google_connect(store):
     if secret:
         data['client_secret'] = secret
     tokens = request('https://oauth2.googleapis.com/token', data, form=True)
+    tokens['obtained_at'] = time.time()
     store.secret('google_tokens', tokens)
-    return 'Google Calendar connected.'
+    return 'Google connected (Calendar%s).' % (' and Gmail' if 'gmail' in tokens.get('scope', '') else '')
 
 
 def calendar(store):
-    tokens = store.secret('google_tokens')
-    if not tokens:
-        raise ValueError('Connect Google Calendar in Settings.')
-    if tokens.get('refresh_token'):
-        data = dict(client_id=store.settings['google_client_id'], refresh_token=tokens['refresh_token'], grant_type='refresh_token')
-        if store.secret('google_client_secret'):
-            data['client_secret'] = store.secret('google_client_secret')
-        fresh = request('https://oauth2.googleapis.com/token', data, form=True)
-        tokens.update(fresh)
-        store.secret('google_tokens', tokens)
+    from .actions import google_token
+    tokens = {'access_token': google_token(store)}
     query = urllib.parse.urlencode(dict(timeMin=datetime.now(timezone.utc).isoformat(), singleEvents='true', orderBy='startTime', maxResults=10))
     response = request('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + query,
                        headers={'Authorization': 'Bearer ' + tokens['access_token']})

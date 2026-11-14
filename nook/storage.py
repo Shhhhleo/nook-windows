@@ -20,7 +20,9 @@ DEFAULTS = dict(enabled=['Music', 'Time', 'To do'], order=WIDGETS, width=840,
                 ollama_model='', speak_replies=False, user_name='', greeting_index=0,
                 notifications_enabled=False, notifications_preview=False, notifications_apps='',
                 onboarding_complete=False, voice_hotkey=False, snippy_position=None,
-                weather_source='City', mcp_connections=[], live_news=True, speech_language='English (US)', microphone=-1)
+                weather_source='City', mcp_connections=[], live_news=True, speech_language='English (US)', microphone=-1,
+                cloud_brain=True, claude_model='claude-opus-5-5', claude_model_name='Claude Opus 5.5',
+                whop_account_id='', whatsapp_autopilot=False, whatsapp_contacts=[], snippy_sidebar=True)
 
 
 class Blob(ctypes.Structure):
