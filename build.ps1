@@ -26,7 +26,8 @@ try {
         $destinationFile = Join-Path "$OutputDirectory/Nook" $relativeFile
         if (Test-Path -LiteralPath $destinationFile) {
             try {
-                $fileProbe = [IO.File]::Open($destinationFile, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+                # Probe exclusivity with read access; normal portable install files may be read-only to standard users.
+                $fileProbe = [IO.File]::Open($destinationFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
                 $fileProbe.Dispose()
             } catch { throw "Quit Notch from its tray menu before updating. Locked file: $destinationFile" }
         }
