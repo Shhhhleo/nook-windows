@@ -84,6 +84,12 @@ READ_ONLY_TOOLS = {'web_search', 'fetch_page', 'latest_news', 'get_weather', 'fi
                    'list_todos', 'get_calendar', 'gmail_search', 'gmail_read', 'whop_summary', 'whop_payments'}
 ACTION_REQUEST = (r"\b(organi[sz]e|tidy|sort|move|clean ?up|arrange|create|make (?:a |me a )?(?:file|note|document)|write (?:a |me a )?(?:file|note)"
                   r"|save|send|text|message|whatsapp|e-?mail)\b")
+CHANGE_REQUEST = r"\b(add|remind|complete|tick off|cross off|check off|mark|open|launch|start)\b"
+QUESTION = r"\?\s*$|^(what|which|who|when|where|why|how|did|do|does|have|has|is|are|was|were|can you tell)\b"
+CLAIM = (r"^\W*(?:done\b|(?:i(?:'ve|’ve| have)?\s+)?(?:added|moved|sent|created|saved|marked|completed|opened|ticked|"
+         r"organi[sz]ed|tidied|launched|started)\b)|\b(?:i(?:'ve|’ve| have)|has been|have been|is now|are now)\s+"
+         r"(?:added|moved|sent|created|saved|marked|completed|opened|organi[sz]ed|launched)\b"
+         r"|\b(?:is|are)\s+(?:now|already)\s+(?:on|in|added|marked|done|open)\b|\bgot it\b")
 OFFER = (r"(would you like|shall i|should i|do you want|want me to|i'll propose|i will propose|i can (?:move|create|send|organi[sz]e)"
          r"|here(?:'s| is) (?:my|a) (?:suggestion|proposal|plan)|i suggest|let me know if)")
 
@@ -366,8 +372,9 @@ class Brain:
                     [{'role': 'user', 'content': time_note() + '\n\n' + prompt[:4000]}])
         state = {'tasks_changed': False, 'links': [], 'query': prompt[:400]}
         text = ''
-        nudged = False
+        nudged = corrected = used_tools = False
         wants_action = re.search(ACTION_REQUEST, prompt, re.I)
+        asks_change = ((wants_action or re.search(CHANGE_REQUEST, prompt, re.I)) and not re.search(QUESTION, prompt.strip(), re.I))
         for step in range(MAX_STEPS):
             if on_status and step:
                 on_status('Thinking…')
@@ -386,7 +393,20 @@ class Brain:
                     if on_status:
                         on_status('Preparing it for your approval…')
                     continue
+                # Small models also copy an earlier "Added …" reply from the history without calling
+                # the tool. Nothing happened, so make it call the tool once; if it still will not,
+                # say so honestly instead of claiming the action.
+                if not used_tools and asks_change and re.search(CLAIM, text, re.I):
+                    if not corrected:
+                        corrected = True
+                        messages += [reply, {'role': 'user', 'content': 'No tool was called in this turn, so nothing has '
+                                             'happened yet. Call the right tool now instead of replying in text.'}]
+                        if on_status:
+                            on_status('Doing it now…')
+                        continue
+                    text = 'Sorry, I did not manage to do that, so nothing was changed. Please ask me again.'
                 break
+            used_tools = True
             messages.append(reply)
             calls = reply['tool_calls'][:4]
             offered = {t['function']['name'] for t in tools}

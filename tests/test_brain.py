@@ -137,6 +137,30 @@ class BrainTests(unittest.TestCase):
             brain.Brain(self.store, approvals).respond('Tell me about clouds', [])
         self.assertEqual(len(chat.payloads), 1)
 
+    def test_claimed_action_without_a_tool_call_is_corrected_or_retracted(self):
+        history = [{'role': 'user', 'content': 'Add buy milk to my to-do list'},
+                   {'role': 'assistant', 'content': 'Added **buy milk** to your to-do list.'}]
+        fake = FakeOllama([('Added **call the bank**.', []), ('', [call('add_todo', text='call the bank')]), ('Added it.', [])])
+        with patch.object(brain, 'ollama_chat', fake):
+            result = brain.Brain(self.store, None).respond('Also add call the bank', history)
+        self.assertIn('No tool was called', fake.payloads[1]['messages'][-1]['content'])
+        self.assertEqual(self.store.settings['todos'][-1]['text'], 'call the bank')
+        self.assertEqual(result['text'], 'Added it.')
+        # Still no tool after the correction: never claim it happened.
+        stubborn = FakeOllama([('"Pay rent" is now on your to-do list.', []), ("I've added pay rent.", [])])
+        with patch.object(brain, 'ollama_chat', stubborn):
+            result = brain.Brain(self.store, None).respond('And add pay rent', history)
+        self.assertIn('nothing was changed', result['text'])
+        self.assertNotIn('pay rent', [t['text'] for t in self.store.settings.get('todos', [])])
+        # Questions about earlier actions and replies after a real tool call are left alone.
+        for prompt, replies in [('What did you add earlier?', [('I added buy milk earlier.', [])]),
+                                ('add eggs', [('', [call('add_todo', text='eggs')]), ('Added **eggs**.', [])])]:
+            fake = FakeOllama(replies)
+            with patch.object(brain, 'ollama_chat', fake):
+                result = brain.Brain(self.store, None).respond(prompt, history)
+            self.assertEqual(len(fake.payloads), len(replies))
+            self.assertEqual(result['text'], replies[-1][0])
+
     def test_declined_whatsapp_is_never_sent(self):
         class Manager:
             sent = []
