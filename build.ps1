@@ -9,7 +9,7 @@ try {
     $cleanArguments = @()
     if ($Clean) { $cleanArguments = @('--clean') }
     if (!$SkipBuild) {
-        & .venv/Scripts/python.exe -m PyInstaller @cleanArguments --noconfirm --windowed --onedir --name Nook --distpath build/package --collect-all winrt --collect-all tzdata --collect-all vosk --collect-all _sounddevice_data --collect-data mcp --copy-metadata mcp --collect-data jsonschema_specifications --hidden-import anyio._backends._asyncio --collect-all playwright main.py
+        & .venv/Scripts/python.exe -m PyInstaller @cleanArguments --noconfirm --windowed --onedir --name Nook --distpath build/package --collect-all winrt --collect-all tzdata --collect-all vosk --collect-all _sounddevice_data --collect-data mcp --copy-metadata mcp --collect-data jsonschema_specifications --hidden-import anyio._backends._asyncio --collect-all playwright --hidden-import pypdf --hidden-import docx --collect-data docx main.py
         if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
     }
     if (!(Test-Path 'build/package/Nook/Nook.exe')) { throw 'No staged executable. Run the build first.' }

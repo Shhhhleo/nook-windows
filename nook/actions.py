@@ -103,11 +103,39 @@ def web_search(query, limit=6):
     except (OSError, ValueError):
         rows = []
     if not rows:
+        # DuckDuckGo (like Bing, Brave and Startpage) answers scripted requests with a bot check, so fall back
+        # to keyless public APIs: published research from OpenAlex first, then Wikipedia.
+        try:
+            rows = scholar_search(query, 3)
+        except (OSError, ValueError):
+            rows = []
         from . import assistant
         result = assistant.web_lookup(query)
-        rows = [{'title': r['title'], 'url': r['url'], 'snippet': r['detail']} for r in result.get('links', [])]
+        rows += [{'title': r['title'], 'url': r['url'], 'snippet': r['detail']} for r in result.get('links', [])]
     if not rows:
         raise ValueError('Web search returned nothing. Check the internet connection or try different words.')
+    return rows
+
+
+def scholar_search(query, limit=4):
+    """Published books and papers from OpenAlex (keyless). Each row carries its abstract, because the
+    publisher pages behind DOIs are usually paywalled or block scripted reads."""
+    url = 'https://api.openalex.org/works?' + urllib.parse.urlencode({
+        'search': query[:200], 'filter': 'has_abstract:true', 'per-page': limit,
+        'select': 'title,doi,publication_year,primary_location,abstract_inverted_index,authorships'})
+    with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'Notch-Snippy'}), timeout=12) as response:
+        works = json.loads(response.read(2_000_000)).get('results', [])
+    rows = []
+    for work in works:
+        index = work.get('abstract_inverted_index') or {}
+        words = sorted((spot, word) for word, spots in index.items() for spot in spots)
+        abstract = ' '.join(word for _, word in words)
+        link = work.get('doi') or (work.get('primary_location') or {}).get('landing_page_url') or ''
+        if not link.startswith('https://') or len(abstract) < 80:
+            continue
+        authors = ', '.join(a.get('author', {}).get('display_name', '') for a in (work.get('authorships') or [])[:3])
+        title = '%s (%s%s)' % (work.get('title') or 'Untitled', authors + ', ' if authors else '', work.get('publication_year') or 'n.d.')
+        rows.append({'title': _text(title), 'url': link, 'snippet': abstract[:300], 'abstract': abstract[:4000]})
     return rows
 
 

@@ -12,7 +12,7 @@ from datetime import datetime
 
 import jsonschema
 
-from . import actions, cowork, local_ai
+from . import actions, cowork, local_ai, research
 
 MODELS = {'Qwen3 4B Instruct (recommended)': 'qwen3:4b-instruct', 'Qwen3 8B (smarter, slower)': 'qwen3:8b',
           'Qwen3 1.7B (lightest)': 'qwen3:1.7b'}
@@ -27,6 +27,7 @@ Rules:
 - Be warm and direct. Keep replies short (1-4 sentences) unless the user asks for detail. Markdown lists are fine.
 - Use tools whenever they help instead of telling the user what they could do. Call tools one step at a time and use their results.
 - For anything current (news, prices, events, recent facts) call web_search, then fetch_page on the best result if you need detail. Say where the information came from and that it may change. Never invent current facts.
+- When the user asks you to research something, or for a dossier, a report, or "make a PDF about…", call research_dossier with the topic straight away. It searches, reads sources and saves a cited PDF after the user approves; do not search yourself first.
 - For questions about the user's files, use find_files, list_files and read_file inside their cowork folder.
 - To tidy or organise files, look at the folder first, then call propose_file_moves with the full plan straight away. Do not ask for permission in text: the approval card the tool shows is how the user says yes. Nothing is ever deleted or overwritten.
 - The same applies to create_file and whatsapp_send: call the tool; never ask "shall I proceed?" in text first.
@@ -53,7 +54,10 @@ CORE_TOOLS = [
     spec('open_app', 'Open an installed Windows app by name, e.g. "Spotify", "WhatsApp", "Excel".', {'name': TEXT}, ['name']),
     spec('find_files', 'Find files by part of their name in the cowork folder.', {'query': TEXT}, ['query']),
     spec('list_files', 'List a folder inside the cowork folder. Use "." for the top.', {'folder': TEXT}),
-    spec('read_file', 'Read a text file (TXT, MD, CSV, JSON, log) in the cowork folder, e.g. to summarise it.', {'path': TEXT}, ['path']),
+    spec('read_file', 'Read a file (TXT, MD, CSV, JSON, log, PDF, DOCX) in the cowork folder, e.g. to summarise it.', {'path': TEXT}, ['path']),
+    spec('research_dossier', 'Research a topic on the web and save a cited PDF dossier in the cowork folder (user approves '
+         'the file). Use for research, dossiers, reports and "make a PDF about…".',
+         {'topic': TEXT, 'depth': {'type': 'string', 'enum': ['quick', 'standard']}}, ['topic']),
     spec('create_file', 'Create a new TXT, MD or CSV file in the cowork folder (user approves; never overwrites).',
          {'filename': TEXT, 'content': TEXT}, ['filename', 'content']),
     spec('propose_file_moves', 'Organise files: propose moving files into folders inside the cowork folder. Paths are relative. '
@@ -78,11 +82,12 @@ WHOP_TOOLS = [
     spec('whop_payments', 'Recent Whop payments (status: paid, open, pending, void or empty).', {'days': INT, 'status': TEXT}),
 ]
 
-APPROVAL_TOOLS = {'propose_file_moves', 'create_file', 'whatsapp_send', 'gmail_send'}
+APPROVAL_TOOLS = {'propose_file_moves', 'create_file', 'whatsapp_send', 'gmail_send', 'research_dossier'}
 # Tools that only read; several of these in one step run at the same time.
 READ_ONLY_TOOLS = {'web_search', 'fetch_page', 'latest_news', 'get_weather', 'find_files', 'list_files', 'read_file',
                    'list_todos', 'get_calendar', 'gmail_search', 'gmail_read', 'whop_summary', 'whop_payments'}
 ACTION_REQUEST = (r"\b(organi[sz]e|tidy|sort|move|clean ?up|arrange|create|make (?:a |me a )?(?:file|note|document)|write (?:a |me a )?(?:file|note)"
+                  r"|dossier|pdf"
                   r"|save|send|text|message|whatsapp|e-?mail)\b")
 CHANGE_REQUEST = r"\b(add|remind|complete|tick off|cross off|check off|mark|open|launch|start)\b"
 QUESTION = r"\?\s*$|^(what|which|who|when|where|why|how|did|do|does|have|has|is|are|was|were|can you tell)\b"
@@ -97,7 +102,8 @@ STATUS = {'web_search':'Searching the web…', 'fetch_page': 'Reading a web page
           'open_url': 'Opening your browser…', 'open_app': 'Opening the app…', 'find_files': 'Looking through your files…',
           'read_file': 'Reading the file…', 'propose_file_moves': 'Waiting for your approval…',
           'create_file': 'Waiting for your approval…', 'whatsapp_read': 'Reading WhatsApp…',
-          'whatsapp_send': 'Waiting for your approval…', 'gmail_send': 'Waiting for your approval…'}
+          'whatsapp_send': 'Waiting for your approval…', 'gmail_send': 'Waiting for your approval…',
+          'research_dossier': 'Starting the research…'}
 
 
 def available(store):
@@ -135,8 +141,46 @@ TOOL_GROUPS = [
     (r'\b(whatsapp|text|message|messages|chat|reply|replied|dm|send)\b', {'whatsapp_read', 'whatsapp_send'}),
     (r'\b(calendar|meetings?|events?|schedule|agenda|appointments?)\b', {'get_calendar'}),
     (r'\b(e-?mails?|gmail|inbox|mail|unread|send)\b', {'gmail_search', 'gmail_read', 'gmail_send'}),
+    (r'\b(research\w*|dossiers?|pdfs?|reports?)\b', {'research_dossier'}),
     (r'\b(whop|sales|revenue|payments?|earn\w*|customers?|business|sold|refunds?)\b', {'whop_summary', 'whop_payments'}),
 ]
+
+
+# Asking for research or a PDF report goes straight to the research pipeline: the small model
+# otherwise tends to describe the report in chat instead of calling the tool.
+RESEARCH_REQUEST = (r"\b(research\w*|dossiers?)\b|\b(make|create|write|generate|produce|build|give me|prepare)\b[^.?!]{0,40}"
+                    r"\b(pdf|report)\b|\b(pdf|report)\s+(about|on|into|regarding)\b")
+KNOWN_SITES = ('wikipedia', 'reddit', 'quora', 'youtube', 'fandom', 'medium', 'britannica', 'wikihow', 'facebook', 'tiktok')
+AVOID_WORDS = r"(?:no|not|don'?t use|do not use|never use|without|avoid|exclude|excluding|except|skip|other than|instead of)"
+AVOID = r"\b" + AVOID_WORDS + r"\s+(?:using\s+|any\s+|from\s+)?([a-z0-9-]+(?:\.[a-z0-9-]+)*)"
+
+
+def avoided_sites(text):
+    """Sites the user said not to use, e.g. "don't use Wikipedia" or "no reddit.com"."""
+    words = {m.group(1).casefold() for m in re.finditer(AVOID, text or '', re.I)}
+    return sorted({w.split('.')[0] if w.split('.')[0] in KNOWN_SITES else w for w in words
+                   if '.' in w or w in KNOWN_SITES})
+
+
+def research_topic(text):
+    """The subject of a research request, without the request wording or the source rules."""
+    text = re.split(r'[,.;?!]?\s*(?:and\s+|but\s+)?(?:please\s+)?\b' + AVOID_WORDS + r'\b', text, 1, flags=re.I)[0]
+    text = re.sub(r'^.*?\b(?:research(?:\s+(?:dossier|report|pdf))?|dossier|pdf|report)\b\s*(?:about|on|into|regarding|of|for)?\s*',
+                  '', text, 1, flags=re.I | re.S) or text
+    text = re.sub(r'\s+(?:and|then)\s+(?:make|create|write|turn|put|save|give)\b.*$', '', text, flags=re.I | re.S)
+    return re.sub(r'\s+', ' ', text).strip(' .?!"\'')[:200]
+
+
+def research_request(prompt, history):
+    """The user message asking for research: this one, or the previous one when this one only adds
+    rules about sources ("don't use Wikipedia")."""
+    if re.search(RESEARCH_REQUEST, prompt, re.I):
+        return prompt
+    if avoided_sites(prompt) or re.search(r'\bsources?\b', prompt, re.I):
+        earlier = [row.get('content') or '' for row in history if row.get('role') == 'user']
+        if earlier and re.search(RESEARCH_REQUEST, earlier[-1], re.I):
+            return earlier[-1]
+    return ''
 
 
 def route_tools(tools, prompt, history=(), contacts=()):
@@ -227,7 +271,8 @@ class Brain:
         store = self.store
         root = store.settings['search_root']
         if name == 'web_search':
-            rows = actions.web_search(args['query'])
+            avoid = state.get('avoid', ())
+            rows = [r for r in actions.web_search(args['query']) if not research.blocked(research.domain(r['url']), avoid)]
             state['links'] += [{'title': r['title'], 'detail': r['url'], 'url': r['url']} for r in rows[:3]]
             return json.dumps(rows)
         if name == 'fetch_page':
@@ -257,6 +302,9 @@ class Brain:
             if not self.approve('file', 'Create ' + proposal['path'] + '?', args['content'][:6000])[0]:
                 return 'The user declined. The file was not created.'
             return cowork.apply(proposal, root)['text']
+        if name == 'research_dossier':
+            return research.dossier(self.approve, root, args['topic'], args.get('depth') or 'standard',
+                                    state.get('on_status'), model_id(store), state, state.get('avoid', ()))
         if name == 'propose_file_moves':
             plan = actions.plan_moves(root, args['moves'])
             detail = '\n'.join('%s  →  %s' % (m['source'], m['destination']) for m in plan)
@@ -333,7 +381,8 @@ class Brain:
                 return
             if on_status:
                 on_status(STATUS.get(batch[0].get('function', {}).get('name'), 'Working…'))
-            scratch = [{'tasks_changed': False, 'links': [], 'query': state.get('query', '')} for _ in batch]
+            scratch = [{'tasks_changed': False, 'links': [], 'query': state.get('query', ''), 'avoid': state.get('avoid', ())}
+                       for _ in batch]
             if len(batch) == 1:
                 results.append(self.execute(batch[0], all_tools, scratch[0]))
             else:
@@ -370,7 +419,17 @@ class Brain:
             budget -= len(content)
         messages = ([{'role': 'system', 'content': SYSTEM + '\n\n' + context_note(self.store)}] + recent +
                     [{'role': 'user', 'content': time_note() + '\n\n' + prompt[:4000]}])
-        state = {'tasks_changed': False, 'links': [], 'query': prompt[:400]}
+        users = ' '.join(row.get('content') or '' for row in history[-6:] if row.get('role') == 'user')
+        state = {'tasks_changed': False, 'links': [], 'query': prompt[:400], 'on_status': on_status,
+                 'avoid': avoided_sites(users + ' ' + prompt)}
+        request = research_request(prompt, history)
+        if request and research_topic(request) and any(t['function']['name'] == 'research_dossier' for t in all_tools):
+            result = self.execute({'function': {'name': 'research_dossier', 'arguments': {'topic': research_topic(request)}}},
+                                  all_tools, state)['content']
+            text = re.sub(r'^Error:\s*', "I couldn't finish the research: ", result)
+            text = re.sub(r'^The user declined\. The PDF was not saved\.', 'Okay, I did not save the PDF.', text)
+            return {'text': text, 'links': state['links'][:6], 'tasks_changed': False, 'markdown': True,
+                    'engine': model_id(self.store)}
         text = ''
         nudged = corrected = used_tools = False
         wants_action = re.search(ACTION_REQUEST, prompt, re.I)
