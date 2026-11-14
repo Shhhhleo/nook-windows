@@ -29,17 +29,13 @@ def main():
     app.setStyleSheet(STYLE.replace('#b7b0ff', store.settings['accent']))
     notch = Notch(store)
     notch.show()
-    from nook.news import start_monitor
-    start_monitor(notch)
-    if notch.store.settings.get('whatsapp_autopilot') and notch.store.settings.get('whatsapp_contacts'):
-        QTimer.singleShot(5000, notch.whatsapp.start)
     if not notch.store.settings.get('onboarding_complete'):
-        QTimer.singleShot(300, notch.cloud.onboard)
+        from nook.onboarding import Onboarding
+        setup = Onboarding(notch)
+        QTimer.singleShot(300, setup.show)
     elif '--settings' in sys.argv:
         QTimer.singleShot(300, notch.open_settings)
     result = app.exec()
-    notch.cloud.voice.close()
-    notch.whatsapp.stop()
     notch.search_cancel.set()
     lock.unlock()
     return result

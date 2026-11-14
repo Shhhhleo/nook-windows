@@ -14,13 +14,13 @@
   <Resources><Resource Language="en-us" /></Resources>
   <Applications>
     <Application Id="App" Executable="Nook.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="Notch" Description="Desktop widgets and Snippy, your local assistant"
+      <uap:VisualElements DisplayName="Notch" Description="Desktop widgets in a notch"
           BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png" />
     </Application>
   </Applications>
   <Capabilities>
     <Capability Name="internetClient" />
-    <uap3:Capability Name="userNotificationListener" />
+    
     <rescap:Capability Name="runFullTrust" />
     <DeviceCapability Name="location" />
   </Capabilities>

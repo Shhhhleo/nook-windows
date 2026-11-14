@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
-if exist "dist\Snippy\Nook\Nook.exe" (
- start "" "dist\Snippy\Nook\Nook.exe"
+if exist "dist\Notch\Nook\Nook.exe" (
+ start "" "dist\Notch\Nook\Nook.exe"
 ) else (
  start "" ".venv\Scripts\pythonw.exe" "main.py"
 )

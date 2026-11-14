@@ -1,5 +1,7 @@
 # Notch update validation — 14 November 2026
 
+_Recorded before Snippy moved to its own repository; Snippy, MCP, speech and AI items below now belong to the Snippy project._
+
 - 30 regression tests passed: hover/collapse, paused media, idle widget substitution, persistent preferences and chats, deterministic clock/name/identity, bounded file access and exclusive document creation, unit conversion requests, notification filtering, and simulated display positioning.
 - MCP test server on an ephemeral loopback port exercised initialize, tools/list and tools/call. No account or external application was accessed by the tests.
 - Qt layouts were rendered offscreen with fixture content: resting/expanded notch, compact chat, fullscreen chat and onboarding. No desktop capture or mouse/keyboard control was used.

@@ -16,9 +16,7 @@ from pathlib import Path
 import psutil
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar.readonly',
-                 'https://www.googleapis.com/auth/gmail.readonly',
-                 'https://www.googleapis.com/auth/gmail.send']
+GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 
 class Signals(QObject):
@@ -257,11 +255,25 @@ def google_connect(store):
     tokens = request('https://oauth2.googleapis.com/token', data, form=True)
     tokens['obtained_at'] = time.time()
     store.secret('google_tokens', tokens)
-    return 'Google connected (Calendar%s).' % (' and Gmail' if 'gmail' in tokens.get('scope', '') else '')
+    return 'Google Calendar connected.'
+
+
+def google_token(store):
+    tokens = store.secret('google_tokens')
+    if not tokens:
+        raise ValueError('Google is not connected. Open Settings → Connections and choose Connect Google.')
+    fresh_until = tokens.get('obtained_at', 0) + tokens.get('expires_in', 0) - 120
+    if time.time() > fresh_until and tokens.get('refresh_token'):
+        data = dict(client_id=store.settings['google_client_id'], refresh_token=tokens['refresh_token'], grant_type='refresh_token')
+        if store.secret('google_client_secret'):
+            data['client_secret'] = store.secret('google_client_secret')
+        tokens.update(request('https://oauth2.googleapis.com/token', data, form=True))
+        tokens['obtained_at'] = time.time()
+        store.secret('google_tokens', tokens)
+    return tokens['access_token']
 
 
 def calendar(store):
-    from .actions import google_token
     tokens = {'access_token': google_token(store)}
     query = urllib.parse.urlencode(dict(timeMin=datetime.now(timezone.utc).isoformat(), singleEvents='true', orderBy='startTime', maxResults=10))
     response = request('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + query,

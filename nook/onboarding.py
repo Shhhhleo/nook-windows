@@ -23,13 +23,7 @@ class Onboarding(QWizard):
         self.resize(600, 500)
         self.controls = {}
         s = owner.store.settings
-        page, form = self.add_page('First, what should Snippy call you?', 'Your name and preferences stay on this PC. You can change them in Settings.')
-        self.name = QLineEdit()
-        self.name.setMaxLength(40)
-        form.addRow('Your name', self.name)
-        page.registerField('name*', self.name)
-        self.name.setText(s['user_name'])
-        self.add_page('Make yourself at home', 'Choose a display and colour. Drag Snippy freely between your displays.')
+        page, form = self.add_page('Make yourself at home', 'Choose a display and colour.')
         form = self.current_form
         display = QComboBox()
         display.addItems([screen.name() for screen in QApplication.screens()])
@@ -41,7 +35,7 @@ class Onboarding(QWizard):
         colour = QPushButton('Choose colour')
         colour.clicked.connect(self.pick_colour)
         form.addRow('', colour)
-        self.check(form, 'animation', 'Animate Snippy and the notch')
+        self.check(form, 'animation', 'Animate the notch')
         self.check(form, 'hour24', 'Use a 24-hour clock')
         self.add_page('Your desktop, your widgets', 'Select what belongs inside the notch. Desktop tiles can be added in Settings → Desktop.')
         self.widgets = {}
@@ -50,7 +44,7 @@ class Onboarding(QWizard):
             check.setChecked(name in s['enabled'])
             self.widgets[name] = check
             self.current_form.addRow(check)
-        self.add_page('Weather and your workspace', 'Windows can provide your location with permission. Forecasts come from Open-Meteo; Windows Weather does not provide a supported forecast feed for this app.')
+        self.add_page('Weather and file search', 'Windows can provide your location with permission. Forecasts come from Open-Meteo; Windows Weather does not provide a supported forecast feed for this app.')
         self.source = QComboBox()
         self.source.addItems(['City', 'Windows location'])
         self.source.setCurrentText(s['weather_source'])
@@ -59,22 +53,12 @@ class Onboarding(QWizard):
         self.current_form.addRow('City (fallback)', self.city)
         self.check(self.current_form, 'fahrenheit', 'Use Fahrenheit (change on the widget too)')
         self.folder = QLineEdit(s['search_root'])
-        self.current_form.addRow('Cowork folder', self.folder)
+        self.current_form.addRow('File search folder', self.folder)
         pick = QPushButton('Choose folder')
         pick.clicked.connect(self.pick_folder)
         self.current_form.addRow('', pick)
-        self.add_page('How would you like to work?', 'Voice is optional. Hold left Ctrl + Alt to speak, then release to send. Offline recognition supports US and Indian English. Windows microphone permission is required.')
-        self.check(self.current_form, 'voice_hotkey', 'Enable hold-to-talk (Ctrl + Alt)')
-        self.check(self.current_form, 'speak_replies', 'Read typed replies aloud too')
-        self.language = QComboBox()
-        self.language.addItems(['English (US)', 'English (India)'])
-        self.language.setCurrentText(s['speech_language'])
-        self.current_form.addRow('Speech accent', self.language)
-        self.check(self.current_form, 'live_news', 'Refresh public news every 15 minutes')
-        self.check(self.current_form, 'notifications_enabled', 'Announce Windows notifications')
-        self.check(self.current_form, 'notifications_preview', 'Include message previews')
-        self.add_page('Ready when you are', 'Click Finish to save. Optional accounts are added afterwards in Settings → Connections; Notion is an addable MCP app. Nothing connects automatically.')
-        message = QLabel('Snippy sleeps after one idle minute to release AI memory.\n\nClick the cloud for a small typing bar. Only the expand button opens the full chat. Your conversations are saved locally in the chat library.')
+        self.add_page('Ready when you are', 'Click Finish to save. Optional accounts are added afterwards in Settings → Connections. Nothing connects automatically.')
+        message = QLabel('Hover over the notch to expand it. Right-click it or use the tray icon for Settings.')
         message.setWordWrap(True)
         self.current_form.addRow(message)
 
@@ -100,38 +84,31 @@ class Onboarding(QWizard):
             self.accent.setText(color.name())
 
     def pick_folder(self):
-        path = QFileDialog.getExistingDirectory(self, 'Choose cowork folder', self.folder.text())
+        path = QFileDialog.getExistingDirectory(self, 'Choose file search folder', self.folder.text())
         if path:
             self.folder.setText(path)
 
     def validateCurrentPage(self):
         from PySide6.QtWidgets import QMessageBox
-        if self.currentId() == 0 and not self.name.text().strip():
-            return False
-        if self.currentId() == 1 and not QColor(self.accent.text()).isValid():
+        if self.currentId() == 0 and not QColor(self.accent.text()).isValid():
             QMessageBox.information(self, 'Colour', 'Choose a valid accent colour.')
             return False
-        if self.currentId() == 3 and not Path(self.folder.text()).is_dir():
-            QMessageBox.information(self, 'Workspace', 'Choose an existing cowork folder.')
+        if self.currentId() == 2 and not Path(self.folder.text()).is_dir():
+            QMessageBox.information(self, 'File search', 'Choose an existing folder.')
             return False
         return True
 
     def accept(self):
         s = self.owner.store.settings
-        s.update(user_name=self.name.text().strip(), accent=QColor(self.accent.text()).name(),
+        s.update(accent=QColor(self.accent.text()).name(),
                  screen=self.display.currentIndex(), city=self.city.text().strip(),
                  search_root=self.folder.text().strip(), weather_source=self.source.currentText(),
                  enabled=[name for name, check in self.widgets.items() if check.isChecked()],
-                 speech_language=self.language.currentText(), onboarding_complete=True)
+                 onboarding_complete=True)
         s.update({key: check.isChecked() for key, check in self.controls.items()})
         self.owner.store.save()
         from .ui import STYLE
         QApplication.instance().setStyleSheet(STYLE.replace('#b7b0ff', s['accent']))
         self.owner.rebuild()
-        self.owner.cloud.sync_preferences()
-        self.owner.cloud.show_input(True)
-        self.owner.cloud.refresh_size()
-        self.owner.cloud.follow()
-        self.owner.notifications.configure()
         super().accept()
 

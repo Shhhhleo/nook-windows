@@ -81,7 +81,7 @@ class CoreTests(unittest.TestCase):
             notch.rebuild()
             self.app.processEvents()
         settings = Settings(notch)
-        self.assertEqual(settings.tabs.count(), 6)
+        self.assertEqual(settings.tabs.count(), 5)
         notch.expand(False)
         self.assertEqual(notch.height(), store.settings['compact_height'])
         store.settings['animation'] = True
@@ -102,7 +102,6 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(notch.geometry(), notch.target_geometry())
         self.assertTrue(notch.body.isHidden())
         self.assertEqual(notch.view, 'Music')
-        notch.cloud.close()
         notch.pool.waitForDone(10000)
         notch.tray.hide()
         notch.deleteLater()

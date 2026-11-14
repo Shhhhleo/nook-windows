@@ -16,12 +16,8 @@ from .visuals import media_icon, AlbumArt, TrackLabel, WeekStrip, TemplatePrevie
 from . import services
 from .storage import WIDGETS
 from .presets import PRESETS, DESCRIPTIONS, read_template, write_template
-from .chat_ui import Companion, AssistantPanel
-from .snippy import Snippy
-from .notifications import NotificationMonitor
 from .clocks import ClockFace, DESIGNS
 from .desktop import DesktopManager, KINDS
-from . import assistant
 
 
 STYLE = '''
@@ -134,7 +130,6 @@ class Settings(QWidget):
         self.widget_page()
         self.appearance_page()
         self.desktop_page()
-        self.assistant_page()
         self.connections_page()
         self.general_page()
         self.navigation.setCurrentRow(0)
@@ -201,12 +196,6 @@ class Settings(QWidget):
             control = QSpinBox()
             control.setRange(*limits)
             control.setValue(int(value))
-        elif kind == 'microphone':
-            control = QComboBox()
-            control.addItem('Windows default microphone', -1)
-            if value != -1:
-                control.addItem('Saved microphone · ' + str(value), value)
-                control.setCurrentIndex(1)
         elif kind == 'combo':
             control = QComboBox()
             control.addItems(choices)
@@ -257,7 +246,7 @@ class Settings(QWidget):
         self.field(form, 'compact_width', 'Resting width', 'spin', limits=(320, 1100))
         self.field(form, 'compact_height', 'Resting height', 'spin', limits=(36, 90))
         self.field(form, 'music_height', 'Music panel height', 'spin', limits=(128, 240))
-        self.field(form, 'height', 'Widgets and assistant height', 'spin', limits=(300, 850))
+        self.field(form, 'height', 'Widgets height', 'spin', limits=(300, 850))
         self.field(form, 'radius', 'Corner radius', 'spin', limits=(8, 48))
         self.field(form, 'opacity', 'Opacity (%)', 'spin', limits=(65, 100))
         self.field(form, 'font', 'Clock font', 'font')
@@ -352,82 +341,6 @@ class Settings(QWidget):
             self.notch.desktop.remove(item.data(Qt.UserRole))
             self.refresh_desktop_list()
 
-    def list_microphones(self):
-        from . import speech
-        def done(devices):
-            control = self.fields['microphone'][0]
-            selected = control.currentData()
-            control.clear()
-            control.addItem('Windows default microphone', -1)
-            for index, name in devices:
-                control.addItem(name, index)
-            control.setCurrentIndex(max(0, control.findData(selected)))
-            self.model_status.setText('Choose your microphone from the list above.' if devices else 'No microphone found. Check Windows microphone permissions.')
-        self.notch.run_job('microphones', speech.input_devices, done, lambda _: self.model_status.setText('Unable to list microphones. Check Windows microphone permissions.'))
-
-    def assistant_page(self):
-        layout = self.page('Assistant')
-        layout.addWidget(label('Snippy’s brain', 'section'))
-        layout.addWidget(label('Snippy runs entirely on this PC with a free, open model. No account, API key or subscription. It can search the web, read pages and the news, find, read, summarise and organise files in your cowork folder, manage to-dos, open sites and apps, and send WhatsApp messages. Moving files, creating files and sending messages always wait for your approval.', 'muted', True))
-        from . import brain as brain_module
-        form = QFormLayout()
-        self.field(form, 'user_name', 'Your name').setMaxLength(40)
-        self.model_field = QComboBox()
-        for title, model in brain_module.MODELS.items():
-            self.model_field.addItem(title, model)
-        current = brain_module.model_id(self.store)
-        if self.model_field.findData(current) < 0:
-            self.model_field.addItem(current, current)
-        self.model_field.setCurrentIndex(self.model_field.findData(current))
-        self.model_field.setAccessibleName('AI model')
-        form.addRow('AI model', self.model_field)
-        self.field(form, 'speak_replies', 'Read replies aloud', 'check')
-        self.field(form, 'voice_hotkey', 'Hold Ctrl + Alt to talk', 'check')
-        self.field(form, 'speech_language', 'Speech accent', 'combo', choices=['English (US)', 'English (India)'])
-        self.field(form, 'microphone', 'Microphone', 'microphone')
-        self.field(form, 'live_news', 'Refresh current affairs every 15 minutes', 'check')
-        layout.addWidget(button('Refresh microphone choices', self.list_microphones))
-        self.form_card(layout, form)
-        row = QHBoxLayout()
-        row.addWidget(button('Check installed models', self.find_models))
-        row.addWidget(button('Download selected model', self.download_model))
-        layout.addLayout(row)
-        self.model_status = label('Qwen3 4B Instruct is included with Notch. It fits a 4 GB graphics card; Qwen3 8B is smarter but slower and downloads about 5 GB the first time.', 'muted', True)
-        layout.addWidget(self.model_status)
-        layout.addWidget(label('The model stays ready during a conversation and releases memory when Snippy sleeps after one idle minute. The first reply after sleep needs a cold start. Clock and maths questions answer instantly without the model.', 'muted', True))
-        layout.addWidget(label('Conversations are saved on this PC in the chat library. Snippy can search and read text files in your cowork folder, summarise them, and prepare new documents for review. Web lookup sends only the search topic to Wikipedia.', 'muted', True))
-        layout.addWidget(label('Snippy sleeps after one minute without activity and releases its AI service. Your name is saved on this PC for greetings.', 'muted', True))
-        layout.addWidget(button('Open Snippy', self.notch.open_assistant))
-        layout.addWidget(button('Run preference setup again', self.notch.cloud.onboard))
-        layout.addWidget(label('Desktop notifications', 'section'))
-        layout.addWidget(label('Snippy tells you when Claude or Codex finish and raise a Windows notification. Add other apps, or leave the box blank for every app. In-app messages without a Windows alert cannot be detected. Notification text stays out of AI prompts and chat history.', 'muted', True))
-        notifications = QFormLayout()
-        enabled = self.field(notifications, 'notifications_enabled', 'Announce new notifications', 'check')
-        self.field(notifications, 'notifications_preview', 'Show message previews', 'check')
-        apps = self.field(notifications, 'notifications_apps', 'Only these apps')
-        apps.setPlaceholderText('Claude, Codex (blank for every app)')
-        layout.addLayout(notifications)
-        self.notification_status = label(self.notch.notifications.status, 'muted', True)
-        layout.addWidget(self.notification_status)
-        self.notch.notifications.status_changed.connect(self.notification_status.setText)
-        self.notch.notifications.access_changed.connect(enabled.setChecked)
-        layout.addWidget(button('Connect notifications', self.notch.notifications.connect_access))
-        layout.addStretch()
-
-    def find_models(self):
-        self.model_status.setText('Checking the local AI on this PC…')
-        def done(names):
-            self.model_status.setText('Installed: ' + ', '.join(names) if names else 'No models installed yet.')
-        self.notch.run_job('ollama-models', assistant.models, done,
-            lambda _: self.model_status.setText('Bundled AI could not start. Check that the complete app folder is present.'))
-
-    def download_model(self):
-        model = self.model_field.currentData()
-        self.model_status.setText('Downloading %s from the Ollama library. This can take several minutes…' % model)
-        self.notch.run_job('ollama-pull', lambda: assistant.ollama_request('/api/pull', {'model': model, 'stream': False}, timeout=7200),
-            lambda _: self.model_status.setText('%s is ready. Save settings to use it.' % model),
-            lambda message: self.model_status.setText('Download failed: ' + message))
-
     def choose_color(self, field):
         color = QColorDialog.getColor(QColor(field.text()), self)
         if color.isValid():
@@ -446,30 +359,10 @@ class Settings(QWidget):
         self.field(form, 'google_client_secret', 'Google client secret', secret=True)
         self.form_card(layout, form)
         layout.addWidget(label('Windows location requires Windows permission. Forecasts are supplied by Open-Meteo, not the Windows Weather app. Units can also be changed on the widget. Google requires a Desktop OAuth client with the Calendar API enabled.', 'muted', True))
-        layout.addWidget(button('Add or manage MCP apps', self.open_mcp))
         actions = QHBoxLayout()
-        actions.addWidget(button('Connect Google (Calendar + Gmail)', self.connect_google))
+        actions.addWidget(button('Connect Google Calendar', self.connect_google))
         actions.addWidget(button('Disconnect Google', self.disconnect_google))
         layout.addLayout(actions)
-        layout.addWidget(label('Gmail lets Snippy read your inbox and send emails you approve. In Google Cloud Console, enable the Gmail API for the same OAuth client and add yourself as a test user. Reconnect Google after updating to grant Gmail access.', 'muted', True))
-        layout.addWidget(label('Whop', 'section'))
-        whop = QFormLayout()
-        self.field(whop, 'whop_api_key', 'Whop API key', secret=True)
-        self.field(whop, 'whop_account_id', 'Whop account ID (optional, biz_…)')
-        self.form_card(layout, whop)
-        layout.addWidget(label('Create a key in your Whop dashboard → Developer → API keys with payment and member read access. Ask Snippy things like “How did Whop do this week?”.', 'muted', True))
-        layout.addWidget(label('WhatsApp', 'section'))
-        layout.addWidget(label('Snippy uses WhatsApp Web in a dedicated Microsoft Edge window. Sign in once by scanning the QR code. Choose the people Snippy manages: “Draft” asks you before each reply; “Auto” replies on its own (at most once every 45 seconds per person and 30 times an hour). Anything about money, commitments or emergencies is left for you. WhatsApp may limit accounts that automate heavily, so use Auto sparingly.', 'muted', True))
-        whatsapp_form = QFormLayout()
-        self.field(whatsapp_form, 'whatsapp_autopilot', 'Let Snippy manage the chats below', 'check')
-        self.form_card(layout, whatsapp_form)
-        row = QHBoxLayout()
-        row.addWidget(button('Open WhatsApp and sign in', self.open_whatsapp))
-        row.addWidget(button('Choose managed chats', self.manage_whatsapp))
-        layout.addLayout(row)
-        self.whatsapp_status = label(self.whatsapp_summary(), 'muted', True)
-        layout.addWidget(self.whatsapp_status)
-        self.notch.whatsapp.status.connect(self.whatsapp_status.setText)
         layout.addWidget(label('Academia deadlines', 'section'))
         layout.addWidget(label('Sign in on Academia in your browser. Automatic deadline sync requires an API from Academia. You can import a JSON deadline export here.', 'muted', True))
         row = QHBoxLayout()
@@ -493,7 +386,7 @@ class Settings(QWidget):
         form.addRow('', button('Choose search folder', lambda: self.choose_folder(root)))
         self.form_card(layout, form)
         layout.addWidget(label('Search scans filenames on demand, stops after 8 seconds or 50 results, and skips dependency and system folders. Choose a narrower folder for deeper results.', 'muted', True))
-        layout.addWidget(label('The notch expands on hover and collapses when you leave. Right-click it or use the tray icon for Settings and Quit. Drag Snippy between displays; click its expand button to open a full conversation.', 'muted', True))
+        layout.addWidget(label('The notch expands on hover and collapses when you leave. Right-click it or use the tray icon for Settings and Quit.', 'muted', True))
         layout.addWidget(label('Account credentials are encrypted for your Windows user. Settings and tasks are saved locally in %LOCALAPPDATA%\\Nook.', 'muted', True))
         layout.addStretch()
 
@@ -516,8 +409,6 @@ class Settings(QWidget):
                 value = control.value()
             elif kind == 'font':
                 value = control.currentFont().family()
-            elif kind == 'microphone':
-                value = control.currentData()
             elif kind == 'combo':
                 value = control.currentText()
             else:
@@ -530,45 +421,12 @@ class Settings(QWidget):
         self.store.settings['order'] = [item.text() for item in items]
         self.store.settings['enabled'] = [item.text() for item in items if item.checkState() == Qt.Checked]
         self.store.settings['screen'] = self.screen_combo.currentIndex()
-        self.store.settings['ollama_model'] = self.model_field.currentData()
         self.store.save()
-        if self.store.settings.get('whatsapp_autopilot') and self.store.settings.get('whatsapp_contacts'):
-            self.notch.whatsapp.start()
         QApplication.instance().setStyleSheet(STYLE.replace('#b7b0ff', self.store.settings['accent']))
         self.notch.rebuild()
         self.notch.desktop.sync()
-        self.notch.cloud.sync_preferences()
-        self.notch.notifications.configure()
         self.status.setText('Saved. Changes are live.')
         return True
-
-    def whatsapp_summary(self):
-        contacts = self.store.settings.get('whatsapp_contacts', [])
-        if not contacts:
-            return 'No managed chats yet.'
-        return 'Managed: ' + ', '.join('%s (%s)' % (c['name'], 'auto' if c.get('mode') == 'auto' else 'draft') for c in contacts)
-
-    def open_whatsapp(self):
-        self.whatsapp_status.setText('Opening WhatsApp in Edge… scan the QR code if asked.')
-        future = self.notch.whatsapp.submit('open')
-        def report():
-            if not future.done():
-                QTimer.singleShot(1000, report)
-                return
-            error = future.exception()
-            self.whatsapp_status.setText(str(error) if error else 'WhatsApp connected. ' + self.whatsapp_summary())
-        QTimer.singleShot(1000, report)
-
-    def manage_whatsapp(self):
-        from .contacts_ui import ContactsDialog
-        dialog = ContactsDialog(self.store, self)
-        if dialog.exec():
-            self.whatsapp_status.setText(self.whatsapp_summary())
-
-    def open_mcp(self):
-        from .connections_ui import ConnectionsDialog
-        self.mcp_dialog = ConnectionsDialog(self.notch)
-        self.mcp_dialog.show()
 
     def connect_google(self):
         if self.save():
@@ -615,7 +473,6 @@ class Notch(QWidget):
         self.search_cancel = threading.Event()
         self.media_state = {}
         self.widget_data = {}
-        self.assistant_panel = None
         self.media_received = time.monotonic()
         self.view = 'Music'
         self.cover_bytes = None
@@ -659,8 +516,6 @@ class Notch(QWidget):
         header.addWidget(self.compact_state)
         self.clock = label('')
         header.addWidget(self.clock)
-        self.companion = Companion(self, self.open_assistant)
-        header.addWidget(self.companion)
         self.root.addWidget(self.header)
         self.body = QWidget()
         self.body_layout = QVBoxLayout(self.body)
@@ -682,7 +537,6 @@ class Notch(QWidget):
         self.task_timer.start(15000)
         self.menu = QMenu()
         self.menu.addAction('Settings', self.open_settings)
-        self.menu.addAction('Open Snippy', self.open_assistant)
         self.menu.addSeparator()
         self.menu.addAction('Quit Notch', lambda: QApplication.exit(0))
         icon = QPixmap(64, 64)
@@ -706,37 +560,8 @@ class Notch(QWidget):
             screen.geometryChanged.connect(self.reposition)
         QApplication.instance().screenAdded.connect(lambda *_: self.reposition())
         QApplication.instance().screenRemoved.connect(lambda *_: self.reposition())
-        from .approvals import Approvals
-        from .whatsapp import WhatsApp
-        from .brain import Brain
-        self.approvals = Approvals()
-        self.whatsapp = WhatsApp(store)
-        self.brain = Brain(store, self.approvals, self.whatsapp)
-        self.whatsapp.brain = self.brain
         self.rebuild()
         self.desktop = DesktopManager(self)
-        self.cloud = Snippy(self)
-        self.cloud.follow()
-        self.cloud.show()
-        self.notifications = NotificationMonitor(self)
-        self.whatsapp.draft.connect(self.whatsapp_draft)
-        self.whatsapp.activity.connect(self.cloud.announce)
-        self.whatsapp.status.connect(self.cloud.announce)
-
-    def whatsapp_draft(self, draft):
-        def answered(approved, text):
-            if approved and text.strip():
-                self.whatsapp.submit('reply', draft['contact'], text.strip(), draft['key'])
-        self.approvals.post('whatsapp-draft', 'Reply to %s?\nThey wrote: %s' % (draft['contact'], draft['incoming'][:240]),
-                            draft['reply'], answered)
-
-    def moveEvent(self, event):
-        if hasattr(self, 'cloud'):
-            self.cloud.follow()
-
-    def resizeEvent(self, event):
-        if hasattr(self, 'cloud'):
-            self.cloud.follow()
 
     def run_job(self, key, work, done, failed=None):
         if key in self.jobs:
@@ -848,10 +673,6 @@ class Notch(QWidget):
     def toggle_pin(self):
         self.expand(False)
 
-    def open_assistant(self):
-        if hasattr(self, 'cloud'):
-            self.cloud.open_fullscreen()
-
     def preview(self):
         self.expand(False)
         self.reposition()
@@ -879,8 +700,6 @@ class Notch(QWidget):
         self.generation += 1
         self._cards_signature = None
         self.search_cancel.set()
-        if self.assistant_panel is not None:
-            self.body_layout.removeWidget(self.assistant_panel)
         clear(self.body_layout)
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
@@ -891,8 +710,6 @@ class Notch(QWidget):
             self.view_buttons[name] = tab
             toolbar.addWidget(tab)
         toolbar.addStretch()
-        self.assistant_button = Companion(self, self.open_assistant, 26)
-        toolbar.addWidget(self.assistant_button)
         self.pin = button('', self.toggle_pin, 'Pin notch')
         self.pin.setIcon(media_icon('pin', '#88888e'))
         self.pin.setObjectName('mediaControl')
@@ -996,9 +813,6 @@ class Notch(QWidget):
                 if name == 'Running tasks':
                     layout.addWidget(label('Process presence only. Task completion requires an agent integration.', 'muted', True))
         self.cards.setRowStretch(self.card_row, 1)
-        if self.assistant_panel is None:
-            self.assistant_panel = AssistantPanel(self)
-        self.body_layout.addWidget(self.assistant_panel, 1)
         self.body.setVisible(self.expanded)
         self.switch_view(self.view)
         self.reposition()
@@ -1014,8 +828,6 @@ class Notch(QWidget):
         self.search_input.setVisible(name == 'Files')
         self.search_results.setVisible(name == 'Files')
         self.scroll.setVisible(name in ('Music', 'Widgets'))
-        self.assistant_panel.setVisible(name == 'Assistant')
-        self.assistant_button.hide()
         self.message.setVisible(name == 'Files' or bool(self.store.warning))
         if name == 'Files':
             self.search_input.setFocus()
@@ -1200,7 +1012,6 @@ class Notch(QWidget):
         self.compact_artist.setVisible(compact_visible)
         self.compact_art.setVisible(active and compact_visible)
         self.compact_state.setVisible(active and compact_visible)
-        self.companion.hide()
         self.compact_state.setPixmap(media_icon('wave' if self.media_state.get('playing') else 'pause', '#a6a6ac').pixmap(16, 16))
         self.update_progress()
         if 'Time' in self.store.settings['enabled']:
