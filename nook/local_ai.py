@@ -16,6 +16,20 @@ MODEL = 'qwen3:4b-instruct'
 _process = None
 _ready = False
 request_lock = threading.RLock()
+KEEP_ALIVE_AC = '10m'      # Plugged in: keep the model loaded between questions (the UI still sleeps it when idle).
+KEEP_ALIVE_BATTERY = '90s'  # On battery: release GPU/RAM quickly.
+
+
+def on_battery():
+    try:
+        battery = psutil.sensors_battery()
+    except Exception:
+        return False
+    return bool(battery is not None and not battery.power_plugged)
+
+
+def keep_alive():
+    return KEEP_ALIVE_BATTERY if on_battery() else KEEP_ALIVE_AC
 
 
 def stop():
@@ -68,7 +82,10 @@ def ensure_running():
                     raise ValueError('The local AI port is already in use. Close the other Notch instance and try again.') from error
             environment = dict(os.environ, OLLAMA_HOST=f'127.0.0.1:{PORT}',
                                OLLAMA_MODELS=str(BASE / 'models'), OLLAMA_NO_CLOUD='1',
-                               OLLAMA_KEEP_ALIVE='90s', OLLAMA_NUM_PARALLEL='1')
+                               OLLAMA_KEEP_ALIVE=keep_alive(), OLLAMA_NUM_PARALLEL='1',
+                               # Faster prompt processing and a half-size KV cache, so more of the
+                               # model fits in a small GPU's VRAM.
+                               OLLAMA_FLASH_ATTENTION='1', OLLAMA_KV_CACHE_TYPE='q8_0')
             _process = subprocess.Popen([str(executable), 'serve'], env=environment,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW)

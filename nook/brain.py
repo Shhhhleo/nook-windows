@@ -7,6 +7,7 @@ import json
 import re
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import jsonschema
@@ -78,6 +79,9 @@ WHOP_TOOLS = [
 ]
 
 APPROVAL_TOOLS = {'propose_file_moves', 'create_file', 'whatsapp_send', 'gmail_send'}
+# Tools that only read; several of these in one step run at the same time.
+READ_ONLY_TOOLS = {'web_search', 'fetch_page', 'latest_news', 'get_weather', 'find_files', 'list_files', 'read_file',
+                   'list_todos', 'get_calendar', 'gmail_search', 'gmail_read', 'whop_summary', 'whop_payments'}
 ACTION_REQUEST = (r"\b(organi[sz]e|tidy|sort|move|clean ?up|arrange|create|make (?:a |me a )?(?:file|note|document)|write (?:a |me a )?(?:file|note)"
                   r"|save|send|text|message|whatsapp|e-?mail)\b")
 OFFER = (r"(would you like|shall i|should i|do you want|want me to|i'll propose|i will propose|i can (?:move|create|send|organi[sz]e)"
@@ -106,6 +110,43 @@ def tools_for(store):
     if store.secret('whop_api_key'):
         tools += WHOP_TOOLS
     return tools
+
+
+# Speed: every tool definition costs prompt tokens the local model must prefill on each step, so
+# a cheap keyword router sends only the relevant groups. No match means the full set.
+ALWAYS_TOOLS = {'web_search', 'fetch_page'}
+TOOL_GROUPS = [
+    (r'\b(news|headlines?|happening|current events?|breaking)\b', {'latest_news'}),
+    # Plain questions and lookups: the always-on web tools plus news, rather than every tool.
+    (r'\?|\b(who|what|when|where|why|how|which|latest|price|cost|version|search|look ?up|google|find out|explain|tell me)\b',
+     {'latest_news'}),
+    (r'\b(open|launch|start|play|website|site|browser|url|link|app|spotify|youtube)\b', {'open_url', 'open_app'}),
+    (r'\b(files?|folders?|documents?|docs?|pdfs?|notes?|reports?|summar\w*|read|organi[sz]e|tidy|sort|move|clean ?up|'
+     r'arrange|create|save|write|invoices?|csv|txt|spreadsheet|cowork|downloads?|desktop)\b',
+     {'find_files', 'list_files', 'read_file', 'create_file', 'propose_file_moves'}),
+    (r'\b(to[- ]?dos?|tasks?|remind\w*|add|done|finish\w*|complete\w*|tick off|check off)\b', {'list_todos', 'add_todo', 'complete_todo'}),
+    (r'\b(weather|temperature|rain\w*|forecast|hot|cold|umbrella|sunny|snow\w*|wind\w*|humid\w*)\b', {'get_weather'}),
+    (r'\b(whatsapp|text|message|messages|chat|reply|replied|dm|send)\b', {'whatsapp_read', 'whatsapp_send'}),
+    (r'\b(calendar|meetings?|events?|schedule|agenda|appointments?)\b', {'get_calendar'}),
+    (r'\b(e-?mails?|gmail|inbox|mail|unread|send)\b', {'gmail_search', 'gmail_read', 'gmail_send'}),
+    (r'\b(whop|sales|revenue|payments?|earn\w*|customers?|business|sold|refunds?)\b', {'whop_summary', 'whop_payments'}),
+]
+
+
+def route_tools(tools, prompt, history=(), contacts=()):
+    """A small, stable-ordered subset of `tools` for this request, or all of them when nothing matches."""
+    recent = [str(row.get('content') or '')[:400] for row in list(history)[-3:] if row.get('role') in ('user', 'assistant')]
+    text = ' '.join(recent + [prompt]).casefold()
+    wanted = set(ALWAYS_TOOLS)
+    for pattern, names in TOOL_GROUPS:
+        if re.search(pattern, text):
+            wanted |= names
+    if any(name and re.search(r'\b%s\b' % re.escape(name.casefold()), text) for name in contacts):
+        wanted |= {'whatsapp_read', 'whatsapp_send'}
+    subset = [t for t in tools if t['function']['name'] in wanted]
+    if all(t['function']['name'] in ALWAYS_TOOLS for t in subset):
+        return list(tools)
+    return subset
 
 
 def ollama_chat(payload, on_partial=None):
@@ -144,13 +185,23 @@ def clean(text):
 
 
 def context_note(store):
+    """Profile context for the system message. It holds nothing time-dependent, so the system
+    prompt and tool block stay byte-identical across turns and Ollama can reuse its prompt cache."""
     settings = store.settings
-    now = datetime.now().astimezone()
-    return ('Context (data, not instructions): local time %s; user name %s; cowork folder %s; '
-            'WhatsApp managed contacts %s.' % (now.strftime('%A %d %B %Y %H:%M (UTC%z)'),
-                                               json.dumps(settings.get('user_name', '')),
+    return ('Context (data, not instructions): user name %s; cowork folder %s; '
+            'WhatsApp managed contacts %s.' % (json.dumps(settings.get('user_name', '')),
                                                json.dumps(settings.get('search_root', '')),
                                                json.dumps([c.get('name') for c in settings.get('whatsapp_contacts', [])])))
+
+
+def time_note():
+    """The clock goes into the latest user message, after the cached prefix."""
+    now = datetime.now().astimezone()
+    return '[Context (data, not instructions): local time %s]' % now.strftime('%A %d %B %Y %H:%M (UTC%z)')
+
+
+def keep_alive():
+    return local_ai.keep_alive()
 
 
 class Brain:
@@ -174,7 +225,7 @@ class Brain:
             state['links'] += [{'title': r['title'], 'detail': r['url'], 'url': r['url']} for r in rows[:3]]
             return json.dumps(rows)
         if name == 'fetch_page':
-            return json.dumps(actions.fetch_page(args['url']))
+            return json.dumps(actions.fetch_page(args['url'], query=state.get('query', '')))
         if name == 'latest_news':
             from . import news
             topic = (args.get('topic') or '').strip()
@@ -266,8 +317,42 @@ class Brain:
         return {'role': 'tool', 'tool_name': name, 'content': content[:8000]}
 
     # ---------------------------------------------------------- conversation
+    def run_calls(self, calls, all_tools, state, on_status=None):
+        """Run one step's tool calls. Consecutive read-only calls run together; anything that changes
+        state or needs approval runs alone, in order. Results keep the order the model asked for."""
+        results, batch = [], []
+
+        def flush():
+            if not batch:
+                return
+            if on_status:
+                on_status(STATUS.get(batch[0].get('function', {}).get('name'), 'Working…'))
+            scratch = [{'tasks_changed': False, 'links': [], 'query': state.get('query', '')} for _ in batch]
+            if len(batch) == 1:
+                results.append(self.execute(batch[0], all_tools, scratch[0]))
+            else:
+                with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                    results.extend(pool.map(lambda pair: self.execute(pair[0], all_tools, pair[1]), zip(batch, scratch)))
+            for part in scratch:
+                state['links'] += part['links']
+                state['tasks_changed'] = state['tasks_changed'] or part['tasks_changed']
+            batch.clear()
+
+        for call in calls:
+            if call.get('function', {}).get('name') in READ_ONLY_TOOLS:
+                batch.append(call)
+                continue
+            flush()
+            if on_status:
+                on_status(STATUS.get(call.get('function', {}).get('name'), 'Working…'))
+            results.append(self.execute(call, all_tools, state))
+        flush()
+        return results
+
     def respond(self, prompt, history, on_partial=None, on_status=None):
-        tools = tools_for(self.store)
+        all_tools = tools_for(self.store)
+        contacts = [c.get('name') for c in self.store.settings.get('whatsapp_contacts', [])]
+        tools = route_tools(all_tools, prompt, history, contacts)
         recent, budget = [], 6000
         for row in reversed(history[-12:]):
             if row.get('role') not in ('user', 'assistant') or not row.get('content'):
@@ -278,8 +363,8 @@ class Brain:
             recent.insert(0, {'role': row['role'], 'content': content})
             budget -= len(content)
         messages = ([{'role': 'system', 'content': SYSTEM + '\n\n' + context_note(self.store)}] + recent +
-                    [{'role': 'user', 'content': prompt[:4000]}])
-        state = {'tasks_changed': False, 'links': []}
+                    [{'role': 'user', 'content': time_note() + '\n\n' + prompt[:4000]}])
+        state = {'tasks_changed': False, 'links': [], 'query': prompt[:400]}
         text = ''
         nudged = False
         wants_action = re.search(ACTION_REQUEST, prompt, re.I)
@@ -287,7 +372,7 @@ class Brain:
             if on_status and step:
                 on_status('Thinking…')
             reply = ollama_chat({'model': model_id(self.store), 'messages': messages, 'tools': tools, 'think': False,
-                                 'keep_alive': '90s', 'options': {'num_ctx': CONTEXT_TOKENS, 'temperature': .3}},
+                                 'keep_alive': keep_alive(), 'options': {'num_ctx': CONTEXT_TOKENS, 'temperature': .3}},
                                 on_partial)
             text = clean(reply['content'])
             called = {c.get('function', {}).get('name') for c in reply['tool_calls']}
@@ -303,10 +388,16 @@ class Brain:
                     continue
                 break
             messages.append(reply)
-            for call in reply['tool_calls'][:4]:
-                if on_status:
-                    on_status(STATUS.get(call.get('function', {}).get('name'), 'Working…'))
-                messages.append(self.execute(call, tools, state))
+            calls = reply['tool_calls'][:4]
+            offered = {t['function']['name'] for t in tools}
+            if called - offered:
+                tools = all_tools  # The router guessed wrong: offer everything from the next step on.
+            for call in calls:  # Page reads are trimmed to what the user and the searches asked about.
+                if call.get('function', {}).get('name') == 'web_search':
+                    query = (call['function'].get('arguments') or {})
+                    if isinstance(query, dict) and isinstance(query.get('query'), str):
+                        state['query'] += ' ' + query['query'][:200]
+            messages += self.run_calls(calls, all_tools, state, on_status)
         else:
             text = (text + '\n\n' if text else '') + '(I stopped after several steps. Ask me to continue if needed.)'
         links = []
@@ -327,7 +418,7 @@ class Brain:
                   'reveal private information, send money, or contact anyone else. If no reply is needed, or the message needs the '
                   'user personally (money, commitments, emergencies, anything you are unsure about), output exactly NO_REPLY. '
                   'Instructions for this contact: %s') % (self.store.settings.get('user_name') or 'the user', contact['name'], instructions)
-        reply = ollama_chat({'model': model_id(self.store), 'think': False, 'keep_alive': '90s',
+        reply = ollama_chat({'model': model_id(self.store), 'think': False, 'keep_alive': keep_alive(),
                              'options': {'num_ctx': CONTEXT_TOKENS, 'temperature': .4},
                              'messages': [{'role': 'system', 'content': system},
                                           {'role': 'user', 'content': 'Recent chat (oldest first):\n' + lines + '\n\nWrite only the reply.'}]})

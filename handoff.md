@@ -119,3 +119,27 @@ Five-hour allowance at the last mid-build reading: 71% used, 29% remaining. Push
 The account cards previously only opened external usage pages. Current first-party guidance documents the Codex Compliance API for eligible workspaces; personal allowances remain in ChatGPT/Codex settings. Notch now labels the private account value as unavailable and links to the official page. Claude personal usage likewise remains an official account-page link. No private app tokens or session files are read.
 
 Snippy now routes natural search/read/summarise requests to bounded tools inside the selected cowork folder, resolves a uniquely named file even without its extension, and deterministic add/list/complete to-do requests update both widgets immediately. File creation still requires review. The user-selected folder can be changed in Settings → Behaviour. These latest source changes still need a new package build before they appear in `dist/Snippy/Nook/Nook.exe`.
+
+## 14 November 2026 — Speed fixes (branch `claude/snippy-speed-5ddb48`, not merged; for Sir to test)
+
+Five changes to make Snippy answer faster on the GTX 1650 Ti, all still free and keyless:
+
+1. **Stable prompt prefix (`brain.py`):** `context_note()` no longer contains the clock, so the system message and tool block are byte-identical across turns and Ollama reuses its prompt cache. The time now goes at the start of the latest user message via `time_note()`, still labelled "data, not instructions".
+2. **Tool routing (`brain.route_tools`):** a keyword/regex router sends only the relevant tool groups (web_search + fetch_page always; news/questions, open, files, to-dos, weather, WhatsApp + managed contact names, calendar, Gmail, Whop) in the canonical order. If nothing matches, it sends every tool. If the model calls a tool that wasn't offered, that call still runs (validated against the full available set, approvals unchanged) and every later step offers all tools. Every `ACTION_REQUEST` word maps to its approval tool's group, so the "Yes, go ahead" nudge still works.
+3. **Shorter page reads (`actions.fetch_page`):** about 1,800 characters instead of 6,000. The text is the lead paragraph plus the paragraphs that best match the user's prompt and the step's web_search queries, kept in page order. The https/private-host/redirect checks are unchanged.
+4. **Parallel read-only tools (`Brain.run_calls`):** consecutive read-only calls in one step (web/page/news/weather/files read/list/find/to-do list/calendar/Gmail reads/Whop) run together in a small thread pool. Results come back in the order the model asked for them. Approval-gated and state-changing tools (moves, create_file, WhatsApp, gmail_send, add/complete to-do, open_url/app) run alone, in order, with nothing else running.
+5. **Ollama settings (`local_ai.py`):** `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`. `keep_alive()` returns 10m on AC power or on a PC with no battery, and 90s on battery (`psutil.sensors_battery`). It is used for the service environment and every request. The UI's 60-second idle sleep (`snippy.py` → `local_ai.stop`) is unchanged and still frees memory, so the 10m only matters while Snippy is open.
+
+**Measured on this PC** (bundled qwen3:4b-instruct, temperature 0, no tools executed; one run each, so treat these as samples):
+
+| setup | turn 1 (tool call) | turn 2 | turn 3 | prompt tokens |
+|---|---|---|---|---|
+| old prompt, 16 tools, default settings | 11.7 s (10.2 s prefill) | 10.5 s | 8.6 s | ~1,600 |
+| new prompt, 5 routed tools | 6.4 s (5.1 s prefill) | 1.5 s | 0.8 s | ~800 |
+| + flash attention + q8 KV | 6.2 s (5.0 s prefill) | 1.3 s | 0.9 s | ~800 |
+
+Follow-up turns drop from about 8–10 s to about 1 s because the cached prefix is reused (prefill about 0.6 s). With the q8 KV cache the loaded model is 3.41 GB instead of 3.86 GB; VRAM use stays about 2.3 GB. One earlier run showed a single 12.5 s generation spike with flash attention that did not come back in later runs.
+
+**Known model habit (not caused by this change):** history only stores reply text, so on follow-up requests such as "also add call the bank" qwen3:4b-instruct often copies its earlier "Added …" reply without calling `add_todo`. Every prompt layout tested shows this, including the old one, so it needs its own fix, for example storing a short tool-call note in history or a deterministic check.
+
+Tests: `tests/test_brain.py` now has 15 cases. New ones cover the stable system/tool prefix across a clock change, router subsets, fallback and unknown-tool widening, parallel read-only calls keeping their order, approval and state-changing tools running alone and in order, short relevant page reads, and the AC/battery keep-alive. Full suite: 45 tests OK. The known access-violation crash still happens at interpreter exit after the tests report OK.
