@@ -23,9 +23,11 @@ for row in [data['config']] + data['layers']:
     if not existing.exists() or existing.stat().st_size != (source / 'blobs' / name).stat().st_size:
         shutil.copy2(source / 'blobs' / name, existing)
 
-# Retire only Nook's previous bundled default. Preserve all other user-added models.
-obsolete = target / 'manifests/registry.ollama.ai/library/qwen3/0.6b'
-if MODEL != 'qwen3:0.6b' and obsolete.is_file() and obsolete.resolve().is_relative_to(target):
+# Retire only Nook's previous bundled defaults. Preserve all other user-added models.
+for retired in ('0.6b', '1.7b', '4b'):
+    obsolete = target / 'manifests/registry.ollama.ai/library/qwen3' / retired
+    if MODEL == 'qwen3:' + retired or not obsolete.is_file() or not obsolete.resolve().is_relative_to(target):
+        continue
     old = json.loads(obsolete.read_text())
     in_use = set()
     for path in (target / 'manifests').rglob('*'):

@@ -345,9 +345,7 @@ class Snippy(QWidget):
     def prepare_model(self):
         if self.model_prepared or 'snippy-prepare' in self.owner.jobs:
             return
-        from . import assistant, brain
-        if brain.available(self.owner.store):
-            return  # Claude needs no local warm-up.
+        from . import assistant
         self.model_prepared = True
         if not self.busy:
             self.workspace.status.setText('Preparing local AI…')

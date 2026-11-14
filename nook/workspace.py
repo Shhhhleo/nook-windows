@@ -654,9 +654,9 @@ class FullscreenChat(QWidget):
         else:
             self.heading.setText('What should I call you?')
         from . import brain
-        cloud = brain.available(self.owner.store)
-        model = next((name for name, value in brain.MODELS.items() if value == brain.model_id(self.owner.store)), 'Claude')
-        self.engine_pill.setText(model + ' · live web' if cloud else 'Local AI · add a Claude key for live answers')
+        model = brain.model_id(self.owner.store)
+        name = next((n.split(' (')[0] for n, v in brain.MODELS.items() if v == model), model)
+        self.engine_pill.setText(name + ' · on this PC · free')
         self.refresh_transcript()
         self.refresh_approval()
 

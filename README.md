@@ -20,12 +20,18 @@ Music and tasks share data with the notch. Weather uses a configured city or Win
 
 ## Snippy's brain and actions (new)
 
-Add a Claude API key in **Settings → Assistant** (from console.anthropic.com). Snippy then runs on Claude (Opus 5.5 by default; Sonnet 5.5 or Haiku 5.5 selectable) with live web search and web page reading, so news, prices and other current facts come from the web with sources. Usage is billed to your Anthropic account. Without a key, or when the internet is down, Snippy falls back to the bundled local model. The request opts into Anthropic's server-side refusal fallback (`fallbacks: "default"`) on Opus and Sonnet.
+Snippy runs entirely on this PC with a free, open model: **Qwen3 4B Instruct** (`qwen3:4b-instruct`) through the bundled Ollama runtime. There is no account, API key or subscription. It fits a 4 GB graphics card. Settings → Assistant can switch to Qwen3 8B (smarter, slower, about 5 GB download) or Qwen3 1.7B (lightest), and download the selected model. The brain uses Ollama's native tool calling and loops for up to eight steps.
 
-Snippy can act through tools: open websites and installed apps, find/read/create files in the cowork folder, manage to-dos, check weather and Google Calendar, search/read/send Gmail, read/send WhatsApp messages, and pull Whop analytics (revenue, payments, active/trialing/past-due/canceling and new memberships). **Emails, WhatsApp messages and new files always show an approval card first**; WhatsApp messages can be edited before sending. Content from web pages, emails and chats is treated as data, never instructions.
+Snippy's tools:
 
-- **Gmail:** Settings → Connections → Connect Google (Calendar + Gmail). Enable the Gmail API on the same Google Desktop OAuth client and add yourself as a test user. Existing Google connections must reconnect once to grant Gmail.
-- **Whop:** paste an API key (payment and member read access) and optionally your `biz_` account ID in Settings → Connections.
+- **Research:** keyless web search (DuckDuckGo results with a Wikipedia fallback), a page reader limited to public https pages (no localhost or private networks, about 6,000 characters per page), and the BBC news cache.
+- **Cowork files:** find, list, read and summarise files in the cowork folder; create TXT/MD/CSV files; organise files with a move plan. **Creating files, moving files and sending messages always show an approval card first**; nothing is ever deleted or overwritten, and WhatsApp messages can be edited before sending.
+- **Everyday:** to-dos, weather, opening websites and installed apps.
+- **Optional accounts:** Google Calendar/Gmail tools appear only after Connect Google (enable the Gmail API on the same Desktop OAuth client); Whop tools appear only after a Whop API key is saved in Settings → Connections.
+- **Claude and Codex alerts:** with notifications connected (Settings → Assistant → Connect notifications), Snippy tells you when the Claude or Codex apps raise a Windows notification. The app filter defaults to “Claude, Codex” for new installs.
+
+Content from web pages, files and chats is treated as data, never instructions. Small local models are slower and less reliable than large cloud models, so check important facts against the sources Snippy lists.
+
 - **WhatsApp:** Settings → Connections → Open WhatsApp and sign in. A dedicated Microsoft Edge window (separate profile in `%LOCALAPPDATA%\Nook\whatsapp-profile`) opens WhatsApp Web; scan the QR code once. **Choose managed chats** lists the people Snippy manages, each with *Draft* (Snippy prepares a reply and asks you) or *Auto* (Snippy replies itself, at most once per 45 seconds per person and 30 times an hour) plus personal instructions. Tick *Let Snippy manage the chats below* to start the autopilot, which checks unread managed chats every 15 seconds while Notch runs. Snippy leaves anything about money, commitments or emergencies for you. WhatsApp Web's layout changes occasionally; selectors live in `nook/whatsapp.py` (`SEL`). WhatsApp may restrict accounts that automate heavily, so use Auto sparingly.
 
 The full-screen workspace now has an animated sky (drifting parallax clouds, about 25 fps only while it is open and animations are on), a chat-library sidebar with search that can be pinned or hidden (button or Ctrl+B; hover the left edge to peek), chat bubbles with Markdown, and approval cards above the composer. Ctrl+N starts a new chat; right-click a chat to delete it.
@@ -50,7 +56,7 @@ Local tools work without loading AI:
 
 The model can summarise a text file (`summarise notes.txt`) and propose new TXT, Markdown or CSV documents. Snippy also understands natural requests such as `search for my report`, `read the file called notes.txt`, `add task buy milk`, or `mark buy milk done`. File previews are bounded to 250 KB and text types; paths and symlinks outside the chosen search folder are rejected. Creation requires reviewing the proposal; existing files are never overwritten. It cannot run arbitrary commands, code, or control other apps.
 
-Ollama 0.40.16 and **qwen3:1.7b** are bundled. No separate Ollama installation is required. A private service binds to 127.0.0.1:11435. Opening the typing bar preloads the model; normal replies stream as they are generated. Conversation and tool selection use different prompts to reduce spurious tool calls and repetition. After one idle minute, Snippy sleeps and stops its owned AI service to release memory. The first request after sleep may still need a cold load. Small local models can still make factual mistakes; use sources for important or current facts.
+Ollama 0.40.16 and **qwen3:4b-instruct** are bundled. No separate Ollama installation is required. A private service binds to 127.0.0.1:11435. Opening the typing bar preloads the model; normal replies stream as they are generated. Conversation and tool selection use different prompts to reduce spurious tool calls and repetition. After one idle minute, Snippy sleeps and stops its owned AI service to release memory. The first request after sleep may still need a cold load. Small local models can still make factual mistakes; use sources for important or current facts.
 
 ### Optional MCP apps
 

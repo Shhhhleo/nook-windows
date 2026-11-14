@@ -29,7 +29,7 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(assistant, 'ollama_request') as api:
             self.assertEqual(assistant.respond('What is my name?', [], self.settings)['text'], 'Your name is Alex.')
             self.assertIn('project creator', assistant.respond('Who made you?', [], self.settings)['text'])
-            self.assertIn('local assistant', assistant.respond('Who are you?', [], self.settings)['text'])
+            self.assertIn('run entirely on this PC', assistant.respond('Who are you?', [], self.settings)['text'])
             self.assertIn('Snippy', assistant.respond('Briefly introduce yourself.', [], self.settings)['text'])
             self.assertEqual(assistant.respond('Can you tell me my name?', [], self.settings)['text'], 'Your name is Alex.')
             api.assert_not_called()

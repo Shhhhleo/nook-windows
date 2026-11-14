@@ -177,41 +177,28 @@ class AssistantPanel(QWidget):
             self.history = self.history[-200:]
             self.chat_id = self.archive.save(self.chat_id, self.history)
             self.show_result(result)
-        from . import brain
-        cloud = brain.available(self.notch.store)
         try:
-            immediate = assistant.instant_response(prompt, settings, cloud)
+            immediate = assistant.instant_response(prompt, settings, agent=True)
         except (ValueError, SyntaxError, ZeroDivisionError) as error:
             self.failed(str(error))
             return
         if immediate is not None:
             done(immediate)
             return
-        if not cloud:
-            self.set_busy(True, 'Working locally…')
-            self.notch.run_job('assistant', lambda: assistant.respond(prompt, history, settings, self.partial.emit), done, self.failed)
-            return
         self.set_busy(True, 'Thinking…')
-        self.notch.run_job('assistant', lambda: self.think(prompt, history, settings), done, self.failed)
+        self.notch.run_job('assistant', lambda: self.think(prompt, history), done, self.failed)
 
-    def think(self, prompt, history, settings):
-        """Claude first; the bundled local model answers when the internet is unavailable."""
-        import anthropic
+    def think(self, prompt, history):
+        """The local agent: bundled model with tools. Errors become plain, actionable messages."""
+        import urllib.error
         try:
             return self.notch.brain.respond(prompt, history, self.partial.emit, self.progress.emit)
-        except anthropic.AuthenticationError:
-            raise ValueError('Claude rejected the API key. Check it in Settings → Assistant.')
-        except anthropic.PermissionDeniedError:
-            raise ValueError('This Claude API key cannot use the selected model. Choose another in Settings → Assistant.')
-        except anthropic.RateLimitError:
-            raise ValueError('Claude is rate-limited right now. Try again in a minute.')
-        except anthropic.APIConnectionError:
-            self.progress.emit('Offline — answering with local AI…')
-            result = assistant.respond(prompt, history, settings, self.partial.emit)
-            result['text'] = '(Offline, so this answer comes from the local AI.)\n\n' + result['text']
-            return result
-        except anthropic.APIStatusError as error:
-            raise ValueError('Claude returned an error (%s). Try again shortly.' % error.status_code)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise ValueError('The selected AI model is not installed. Choose another or download it in Settings → Assistant.')
+            raise ValueError('The local AI returned an error (%s). Try again.' % error.code)
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            raise ValueError('The local AI did not respond. Try again in a moment.')
 
     def show_result(self, result):
         self.set_busy(False)

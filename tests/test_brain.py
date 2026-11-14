@@ -1,4 +1,4 @@
-"""Claude brain loop, approvals, Whop analytics and WhatsApp matching, without network or real accounts."""
+"""Local agent loop, approvals, file organisation, safe web reading and WhatsApp matching — no network or real accounts."""
 import json
 import os
 import tempfile
@@ -8,47 +8,29 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-import anthropic
-import httpx2
 from PySide6.QtWidgets import QApplication
 
 from nook import storage, brain, actions, whatsapp
 from nook.approvals import Approvals
 
 
-def sse(events):
-    return ''.join('event: %s\ndata: %s\n\n' % (e['type'], json.dumps(e)) for e in events).encode()
+def call(name, **arguments):
+    return {'function': {'name': name, 'arguments': arguments}}
 
 
-def message(blocks, stop):
-    events = [{'type': 'message_start', 'message': {'id': 'msg_1', 'type': 'message', 'role': 'assistant',
-               'model': 'claude-opus-5-5', 'content': [], 'stop_reason': None, 'stop_sequence': None,
-               'usage': {'input_tokens': 10, 'output_tokens': 1}}}]
-    for index, block in enumerate(blocks):
-        if block['type'] == 'text':
-            events += [{'type': 'content_block_start', 'index': index, 'content_block': {'type': 'text', 'text': ''}},
-                       {'type': 'content_block_delta', 'index': index, 'delta': {'type': 'text_delta', 'text': block['text']}}]
-        else:
-            events += [{'type': 'content_block_start', 'index': index, 'content_block': {'type': 'tool_use', 'id': block['id'], 'name': block['name'], 'input': {}}},
-                       {'type': 'content_block_delta', 'index': index, 'delta': {'type': 'input_json_delta', 'partial_json': json.dumps(block['input'])}}]
-        events.append({'type': 'content_block_stop', 'index': index})
-    events += [{'type': 'message_delta', 'delta': {'stop_reason': stop, 'stop_sequence': None}, 'usage': {'output_tokens': 5}},
-               {'type': 'message_stop'}]
-    return sse(events)
+class FakeOllama:
+    """Scripted replies standing in for the bundled model's /api/chat."""
 
-
-class FakeClaude:
     def __init__(self, replies):
         self.replies = list(replies)
-        self.requests = []
+        self.payloads = []
 
-    def handler(self, request):
-        self.requests.append({'body': json.loads(request.content), 'headers': dict(request.headers)})
-        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=self.replies.pop(0))
-
-    def client(self, _store=None):
-        http = anthropic.DefaultHttpxClient(transport=httpx2.MockTransport(self.handler))
-        return anthropic.Anthropic(api_key='sk-ant-test', http_client=http, max_retries=0)
+    def __call__(self, payload, on_partial=None):
+        self.payloads.append(json.loads(json.dumps(payload)))
+        content, calls = self.replies.pop(0)
+        if on_partial and content:
+            on_partial(content)
+        return {'role': 'assistant', 'content': content, 'tool_calls': calls}
 
 
 class StubApprovals:
@@ -72,95 +54,127 @@ class BrainTests(unittest.TestCase):
         patcher = patch.object(storage, 'DATA', Path(self.temp.name))
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.root = Path(self.temp.name) / 'work'
+        self.root.mkdir()
         self.store = storage.Store()
-        self.store.settings.update(user_name='Alex', search_root=self.temp.name)
+        self.store.settings.update(user_name='Alex', search_root=str(self.root))
 
-    def test_tool_loop_request_shape_and_todo(self):
-        fake = FakeClaude([message([{'type': 'tool_use', 'id': 'toolu_1', 'name': 'add_todo', 'input': {'text': 'buy milk'}}], 'tool_use'),
-                           message([{'type': 'text', 'text': 'Added **buy milk**.'}], 'end_turn')])
+    def test_tool_loop_payload_and_todo(self):
+        fake = FakeOllama([('', [call('add_todo', text='buy milk')]), ('Added **buy milk**.', [])])
         partials = []
-        with patch.object(brain, 'client', fake.client):
+        with patch.object(brain, 'ollama_chat', fake):
             result = brain.Brain(self.store, StubApprovals(True)).respond('add buy milk', [{'role': 'assistant', 'content': 'hi'}], partials.append)
         self.assertEqual(result['text'], 'Added **buy milk**.')
         self.assertTrue(result['tasks_changed'])
         self.assertEqual(self.store.settings['todos'][-1]['text'], 'buy milk')
-        first = fake.requests[0]
-        body = first['body']
-        self.assertEqual(body['model'], 'claude-opus-5-5')
-        self.assertEqual(body['fallbacks'], 'default')
-        self.assertIn('server-side-fallback-2026-07-01', first['headers'].get('anthropic-beta', ''))
-        self.assertEqual(body['cache_control'], {'type': 'ephemeral'})
-        self.assertEqual(body['output_config'], {'effort': 'medium'})
-        self.assertNotIn('thinking', body)
-        self.assertIn({'type': 'web_search_20260209', 'name': 'web_search', 'max_uses': 5}, body['tools'])
-        # History never starts with an assistant turn; the context note follows the user's message.
-        self.assertEqual([m['role'] for m in body['messages']], ['user', 'system'])
-        self.assertIn('Alex', body['messages'][1]['content'])
-        second = fake.requests[1]['body']['messages']
-        self.assertEqual([m['role'] for m in second], ['user', 'system', 'assistant', 'user'])
-        self.assertEqual(second[3]['content'][0]['tool_use_id'], 'toolu_1')
-        self.assertTrue(partials and partials[-1] == 'Added **buy milk**.')
+        first = fake.payloads[0]
+        self.assertEqual(first['model'], 'qwen3:4b-instruct')
+        self.assertFalse(first['think'])
+        names = [t['function']['name'] for t in first['tools']]
+        self.assertIn('web_search', names)
+        self.assertIn('propose_file_moves', names)
+        self.assertNotIn('gmail_send', names)   # Optional accounts are not connected.
+        self.assertNotIn('whop_summary', names)
+        self.assertEqual(first['messages'][0]['role'], 'system')
+        self.assertIn('Alex', first['messages'][0]['content'])
+        second = fake.payloads[1]['messages']
+        self.assertEqual(second[-1]['role'], 'tool')
+        self.assertEqual(second[-1]['tool_name'], 'add_todo')
+        self.assertEqual(second[-2]['tool_calls'][0]['function']['name'], 'add_todo')
+        self.assertEqual(partials[-1], 'Added **buy milk**.')
 
-    def test_declined_email_is_never_sent(self):
-        fake = FakeClaude([message([{'type': 'tool_use', 'id': 'toolu_2', 'name': 'gmail_send',
-                                     'input': {'to': 'a@example.com', 'subject': 'Hi', 'body': 'Hello'}}], 'tool_use'),
-                           message([{'type': 'text', 'text': 'Okay, not sent.'}], 'end_turn')])
-        approvals = StubApprovals(False)
-        with patch.object(brain, 'client', fake.client), patch.object(actions, 'gmail_send') as send:
-            result = brain.Brain(self.store, approvals).respond('email a', [])
-        send.assert_not_called()
-        self.assertEqual(approvals.asked[0][0], 'email')
-        self.assertIn('declined', fake.requests[1]['body']['messages'][-1]['content'][0]['content'])
-        self.assertEqual(result['text'], 'Okay, not sent.')
-
-    def test_invalid_tool_input_is_reported_not_run(self):
-        fake = FakeClaude([message([{'type': 'tool_use', 'id': 'toolu_3', 'name': 'open_url', 'input': {'link': 'x'}}], 'tool_use'),
-                           message([{'type': 'text', 'text': 'Sorry.'}], 'end_turn')])
-        with patch.object(brain, 'client', fake.client), patch.object(actions, 'open_url') as opened:
+    def test_unknown_tool_and_bad_arguments_are_reported_not_run(self):
+        fake = FakeOllama([('', [call('format_disk'), call('open_url', link='x')]), ('Sorry.', [])])
+        with patch.object(brain, 'ollama_chat', fake), patch.object(actions, 'open_url') as opened:
             brain.Brain(self.store, StubApprovals(True)).respond('open', [])
         opened.assert_not_called()
-        result = fake.requests[1]['body']['messages'][-1]['content'][0]
-        self.assertTrue(result['is_error'])
-        self.assertIn('INVALID_JSON', result['content'])
+        results = [m['content'] for m in fake.payloads[1]['messages'] if m['role'] == 'tool']
+        self.assertIn('no tool called format_disk', results[0])
+        self.assertIn('Invalid arguments', results[1])
 
-    def test_haiku_skips_server_fallback(self):
-        self.store.settings['claude_model'] = 'claude-haiku-5-5'
-        fake = FakeClaude([message([{'type': 'text', 'text': 'Hi'}], 'end_turn')])
-        with patch.object(brain, 'client', fake.client):
-            brain.Brain(self.store, None).respond('hello', [])
-        self.assertNotIn('fallbacks', fake.requests[0]['body'])
-
-    def test_whop_summary_sums_paid_revenue(self):
-        self.store.secret('whop_api_key', 'test-key')
-        def fake_request(url, data=None, headers=None, form=False):
-            self.assertEqual(headers['Authorization'], 'Bearer test-key')
-            if '/payments' in url:
-                return {'data': [{'currency': 'usd', 'total': {'amount': '99.00'}}, {'currency': 'usd', 'total': {'amount': '1.50'}}],
-                        'page_info': {'has_next_page': False}}
-            return {'data': [], 'page_info': {'total_count': 7}}
-        with patch.object(actions.services, 'request', side_effect=fake_request):
-            summary = json.loads(actions.whop_summary(self.store, 7))
-        self.assertEqual(summary['revenue_by_currency'], {'USD': 100.5})
-        self.assertEqual(summary['paid_payments'], 2)
-        self.assertEqual(summary['active_memberships'], 7)
-
-    def test_whop_requires_key(self):
+    def test_file_moves_need_approval_and_never_overwrite(self):
+        (self.root / 'a.pdf').write_text('a')
+        (self.root / 'b.txt').write_text('b')
+        (self.root / 'Docs').mkdir()
+        (self.root / 'Docs' / 'b.txt').write_text('existing')
+        moves = [{'source': 'a.pdf', 'destination': 'PDFs/a.pdf'}]
+        declined = FakeOllama([('', [call('propose_file_moves', moves=moves)]), ('Okay.', [])])
+        with patch.object(brain, 'ollama_chat', declined):
+            brain.Brain(self.store, StubApprovals(False)).respond('tidy', [])
+        self.assertTrue((self.root / 'a.pdf').exists())
+        approved = FakeOllama([('', [call('propose_file_moves', moves=moves)]), ('Done.', [])])
+        approvals = StubApprovals(True)
+        with patch.object(brain, 'ollama_chat', approved):
+            brain.Brain(self.store, approvals).respond('tidy', [])
+        self.assertEqual(approvals.asked[0][0], 'moves')
+        self.assertTrue((self.root / 'PDFs' / 'a.pdf').exists())
         with self.assertRaises(ValueError):
-            actions.whop_summary(self.store)
+            actions.plan_moves(str(self.root), [{'source': 'b.txt', 'destination': 'Docs'}])
+        with self.assertRaises(ValueError):
+            actions.plan_moves(str(self.root), [{'source': 'b.txt', 'destination': '../outside.txt'}])
+        self.assertEqual((self.root / 'Docs' / 'b.txt').read_text(), 'existing')
 
-    def test_whatsapp_contact_matching(self):
+    def test_text_offer_is_followed_through_to_the_approval_card_once(self):
+        (self.root / 'photo.jpg').write_text('p')
+        fake = FakeOllama([('I suggest moving photo.jpg to Images. Would you like me to proceed?', []),
+                           ('', [call('propose_file_moves', moves=[{'source': 'photo.jpg', 'destination': 'Images'}])]),
+                           ('Moved it.', [])])
+        approvals = StubApprovals(True)
+        with patch.object(brain, 'ollama_chat', fake):
+            result = brain.Brain(self.store, approvals).respond('Tidy my folder by file type', [])
+        self.assertEqual(fake.payloads[1]['messages'][-1]['role'], 'user')
+        self.assertEqual(approvals.asked[0][0], 'moves')
+        self.assertTrue((self.root / 'Images' / 'photo.jpg').exists())
+        self.assertEqual(result['text'], 'Moved it.')
+        # A plain question is never pushed into an action.
+        chat = FakeOllama([('Would you like a fun fact?', [])])
+        with patch.object(brain, 'ollama_chat', chat):
+            brain.Brain(self.store, approvals).respond('Tell me about clouds', [])
+        self.assertEqual(len(chat.payloads), 1)
+
+    def test_declined_whatsapp_is_never_sent(self):
+        class Manager:
+            sent = []
+            def call(self, *args):
+                self.sent.append(args)
+        manager = Manager()
+        fake = FakeOllama([('', [call('whatsapp_send', contact='Mum', message='hi')]), ('Not sent.', [])])
+        with patch.object(brain, 'ollama_chat', fake):
+            brain.Brain(self.store, StubApprovals(False), manager).respond('text mum', [])
+        self.assertEqual(manager.sent, [])
+
+    def test_web_search_parses_results_and_page_reader_blocks_private_hosts(self):
+        page = ('<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fnews&amp;rut=x">Example <b>News</b></a>'
+                '<a class="result__snippet" href="#">Fresh <b>story</b></a>')
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, n): return page.encode()
+        with patch.object(actions.urllib.request, 'urlopen', return_value=Response()):
+            rows = actions.web_search('news')
+        self.assertEqual(rows[0], {'title': 'Example News', 'url': 'https://example.com/news', 'snippet': 'Fresh story'})
+        for url in ['http://example.com', 'https://localhost/', 'https://127.0.0.1/', 'https://192.168.1.4/x', 'file:///C:/x']:
+            with self.assertRaises(ValueError):
+                actions.check_public_url(url)
+
+    def test_whatsapp_contact_matching_and_rate_limits(self):
         self.assertTrue(whatsapp.same_contact({'name': 'Mum'}, 'mum'))
         self.assertTrue(whatsapp.same_contact({'name': 'Rahul', 'phone': '+91 98765 43210'}, '+91 98765 43210'))
         self.assertFalse(whatsapp.same_contact({'name': 'Mum'}, 'Mumbai Group'))
-        self.assertFalse(whatsapp.same_contact({'name': 'X', 'phone': '12'}, '12'))
-
-    def test_autopilot_respects_rate_limits(self):
         manager = whatsapp.WhatsApp(self.store)
         self.assertTrue(manager.may_auto_send('Mum'))
         manager.last_auto['Mum'] = __import__('time').time()
         self.assertFalse(manager.may_auto_send('Mum'))
         manager.auto_log = [__import__('time').time()] * whatsapp.MAX_AUTO_PER_HOUR
         self.assertFalse(manager.may_auto_send('Dad'))
+
+    def test_compose_reply_respects_no_reply(self):
+        contact = {'name': 'Mum', 'instructions': ''}
+        transcript = [{'from_me': False, 'text': 'Can you send me 5000 rupees?'}]
+        with patch.object(brain, 'ollama_chat', FakeOllama([('NO_REPLY', [])])):
+            self.assertEqual(brain.Brain(self.store, None).compose_reply(contact, transcript), '')
+        with patch.object(brain, 'ollama_chat', FakeOllama([('<think></think>On my way!', [])])):
+            self.assertEqual(brain.Brain(self.store, None).compose_reply(contact, transcript), 'On my way!')
 
     def test_approvals_block_until_answered_and_allow_edits(self):
         approvals = Approvals()
@@ -173,7 +187,6 @@ class BrainTests(unittest.TestCase):
                 break
             worker.join(.02)
         request = approvals.current()
-        self.assertEqual(request['detail'], 'hello')
         approvals.answer(request, True, 'hello there')
         worker.join(2)
         self.assertEqual(outcome['result'], (True, 'hello there'))

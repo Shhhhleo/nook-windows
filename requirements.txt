@@ -13,6 +13,5 @@ winrt-Windows.UI.Notifications
 winrt-Windows.ApplicationModel
 winrt-Windows.Devices.Geolocation
 mcp==1.30.0
-anthropic==2.8.0
 playwright==1.65.2
 jsonschema

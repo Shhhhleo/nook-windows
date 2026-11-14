@@ -43,11 +43,10 @@ def clock_reply(settings, kind='time'):
     return {'text': 'It is %s (%s) on this PC.%s' % (stamp, zone, ' ' + date + '.' if kind == 'both' else '')}
 
 
-def instant_response(prompt, settings, cloud=False):
+def instant_response(prompt, settings, agent=False):
     """Bounded, deterministic answers that do not need a model or a worker slot.
 
-    With the cloud brain on, only clock, name and arithmetic stay instant; Claude
-    answers everything else, including what Snippy can do.
+    In agent mode the tool-using brain answers "what can you do" itself.
     """
     text = re.sub(r'[?!,]+', ' ', prompt.lower().replace('’', "'")).strip()
     text = re.sub(r'\s+', ' ', text)
@@ -57,12 +56,11 @@ def instant_response(prompt, settings, cloud=False):
         name = settings.get('user_name', '').strip()
         return {'text': 'Your name is ' + name + '.' if name else 'I do not have your name yet. Add it in Settings → Assistant.'}
     if re.fullmatch(r"(?:who are you|what(?:'s| is) your name|what are you called|(?:briefly )?introduce yourself(?: briefly| in one sentence)?|tell me about yourself|/about)", text.rstrip('.')):
-        return {'text': 'I’m Snippy, your assistant in Notch.' if cloud else 'I’m Snippy, the local assistant in Notch.'}
+        return {'text': 'I’m Snippy, the assistant in Notch. I run entirely on this PC.'}
     if re.fullmatch(r'(?:who (?:made|created|built|developed) (?:you|snippy|nook|this app)|who is your (?:creator|developer))', text):
         return {'text': 'I’m part of the Notch app, developed by its project creator. ' +
-                ('My thinking runs on Anthropic’s Claude; Snippy is my name.' if cloud else
-                 'My local language model is from the Qwen team; Snippy is the assistant’s name, not the creator’s.')}
-    if not cloud and re.fullmatch(r'(?:what can you do|help|/help)', text):
+                'My local language model is from the Qwen team; Snippy is the assistant’s name, not the creator’s.'}
+    if not agent and re.fullmatch(r'(?:what can you do|help|/help)', text):
         return {'text': 'I can calculate, check the PC clock, find and read files inside your chosen search folder, summarise text, add or complete to-do items, and draft new documents for your review. Try “search for my report”, “read the file called notes.txt”, “summarise notes.txt”, “add task buy milk”, or “mark buy milk done”. File creation asks you to review it first. Connected MCP apps are available in Settings → Connections.'}
     time_pattern = r"(?:/time|(?:what(?:'?s| is) (?:the )?(?:current |local )?time|what time is it|(?:can you )?(?:tell|show|give) me (?:the )?(?:current |local )?time|time)(?: (?:now|right now|currently|please|here))?)"
     if re.fullmatch(time_pattern, text):
@@ -156,7 +154,7 @@ def prepare_model(settings):
     if 'cloud' in model.lower() or model not in models():
         raise ValueError('Choose an installed local model in Settings → Assistant.')
     return ollama_request('/api/generate', {'model': model, 'prompt': '', 'stream': False,
-                          'keep_alive': '90s', 'options': {'num_ctx': 4096}})
+                          'keep_alive': '90s', 'options': {'num_ctx': 6144}})
 
 
 def web_lookup(query):
@@ -346,7 +344,7 @@ def respond(prompt, history, settings, on_partial=None):
               'argument': {'type': 'string'}}, 'required': ['action', 'argument']}
     payload = {'model': model, 'messages': messages, 'stream': False,
                'keep_alive': '90s', 'think': False,
-               'options': {'num_ctx': 4096, 'num_predict': 700 if re.search(r'\b(detail|detailed|essay|long|explain|draft|write)\b', prompt, re.I) else 220, 'temperature': 0.2, 'repeat_penalty': 1.12}}
+               'options': {'num_ctx': 6144, 'num_predict': 700 if re.search(r'\b(detail|detailed|essay|long|explain|draft|write)\b', prompt, re.I) else 220, 'temperature': 0.2, 'repeat_penalty': 1.12}}
     if tool_mode:
         payload['format'] = schema
     response = chat_request(payload, on_partial if not tool_mode else None)

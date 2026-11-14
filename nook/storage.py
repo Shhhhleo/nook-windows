@@ -18,10 +18,9 @@ DEFAULTS = dict(enabled=['Music', 'Time', 'To do'], order=WIDGETS, width=840,
                 google_client_id='', google_client_secret='', todos=[], deadlines=[],
                 desktop_theme='macOS', desktop_widgets=[], desktop_locked=False,
                 ollama_model='', speak_replies=False, user_name='', greeting_index=0,
-                notifications_enabled=False, notifications_preview=False, notifications_apps='',
+                notifications_enabled=False, notifications_preview=False, notifications_apps='Claude, Codex',
                 onboarding_complete=False, voice_hotkey=False, snippy_position=None,
                 weather_source='City', mcp_connections=[], live_news=True, speech_language='English (US)', microphone=-1,
-                cloud_brain=True, claude_model='claude-opus-5-5', claude_model_name='Claude Opus 5.5',
                 whop_account_id='', whatsapp_autopilot=False, whatsapp_contacts=[], snippy_sidebar=True)
 
 
@@ -91,7 +90,7 @@ class Store:
         # Notion is now an optional MCP app, not a built-in account/widget.
         for key in ('enabled', 'order'):
             self.settings[key] = [name for name in self.settings[key] if name in WIDGETS]
-        if self.settings.get('ollama_model') == 'qwen3:0.6b':
+        if self.settings.get('ollama_model') in ('qwen3:0.6b', 'qwen3:1.7b', 'qwen3:4b'):
             self.settings['ollama_model'] = ''  # Use the upgraded bundled default.
         self.secrets = {}
         try:

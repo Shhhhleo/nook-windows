@@ -1,15 +1,18 @@
-"""Real-world actions Snippy's cloud brain can take on this PC and connected accounts.
+"""Real-world actions Snippy's local brain can take on this PC and connected accounts.
 
 Every function here is called from a worker thread. Anything that sends a message
 or creates a file is gated by the approval callback in brain.py, never here.
 """
 import base64
+import html
+import ipaddress
 import json
 import os
 import re
-import threading
+import socket
 import time
 import urllib.parse
+import urllib.request
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -63,6 +66,88 @@ def open_app(name):
         raise ValueError('I could not find an app called “%s” in the Start menu.' % name)
     os.startfile(str(best[0]))
     return 'Opened ' + best[0].stem + '.'
+
+
+# ---------------------------------------------------------------- free web research
+
+BROWSER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
+
+
+def _text(fragment):
+    return re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]+>', ' ', fragment))).strip()
+
+
+def web_search(query, limit=6):
+    """Keyless public web search (DuckDuckGo HTML results), falling back to Wikipedia."""
+    query = query.strip()[:300]
+    if not query:
+        raise ValueError('Give me something to search for.')
+    rows = []
+    try:
+        request = urllib.request.Request('https://html.duckduckgo.com/html/', urllib.parse.urlencode({'q': query}).encode(),
+                                         {'User-Agent': BROWSER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded'})
+        with urllib.request.urlopen(request, timeout=12) as response:
+            page = response.read(1_500_000).decode('utf-8', 'replace')
+        snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', page, re.S)
+        for index, (href, title) in enumerate(re.findall(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', page, re.S)):
+            href = html.unescape(href)
+            if 'uddg=' in href:
+                href = urllib.parse.unquote(urllib.parse.parse_qs(urllib.parse.urlsplit(href).query).get('uddg', [''])[0])
+            if href.startswith('//'):
+                href = 'https:' + href
+            if not href.startswith('http') or 'duckduckgo.com/y.js' in href:
+                continue  # Skip ads and internal links.
+            rows.append({'title': _text(title), 'url': href, 'snippet': _text(snippets[index]) if index < len(snippets) else ''})
+            if len(rows) >= limit:
+                break
+    except (OSError, ValueError):
+        rows = []
+    if not rows:
+        from . import assistant
+        result = assistant.web_lookup(query)
+        rows = [{'title': r['title'], 'url': r['url'], 'snippet': r['detail']} for r in result.get('links', [])]
+    if not rows:
+        raise ValueError('Web search returned nothing. Check the internet connection or try different words.')
+    return rows
+
+
+class SafeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        check_public_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def check_public_url(url):
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != 'https' or not parts.hostname:
+        raise ValueError('Only public https pages can be read.')
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(parts.hostname, parts.port or 443)}
+    except socket.gaierror:
+        raise ValueError('That website could not be found.')
+    for address in addresses:
+        ip = ipaddress.ip_address(address.split('%')[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            raise ValueError('Pages on local or private networks cannot be read.')
+    return url
+
+
+def fetch_page(url, limit=6000):
+    """Readable text of a public https page, bounded in size. Never local or private addresses."""
+    check_public_url(url.strip())
+    opener = urllib.request.build_opener(SafeRedirect)
+    request = urllib.request.Request(url.strip(), headers={'User-Agent': BROWSER_AGENT, 'Accept': 'text/html,text/plain'})
+    with opener.open(request, timeout=15) as response:
+        kind = response.headers.get('Content-Type', '')
+        if 'html' not in kind and 'text' not in kind:
+            raise ValueError('That link is not a readable web page (%s).' % kind.split(';')[0])
+        charset = response.headers.get_content_charset() or 'utf-8'
+        page = response.read(2_000_000).decode(charset, 'replace')
+    title = _text((re.search(r'<title[^>]*>(.*?)</title>', page, re.S | re.I) or [None, ''])[1])
+    page = re.sub(r'<(script|style|noscript|svg|nav|footer|header|form)\b.*?</\1>', ' ', page, flags=re.S | re.I)
+    body = re.search(r'<(article|main)\b.*?</\1>', page, re.S | re.I)
+    text = _text(body.group(0) if body and len(_text(body.group(0))) > 400 else page)
+    return {'url': url, 'title': title[:200], 'text': text[:limit], 'truncated': len(text) > limit}
 
 
 # ---------------------------------------------------------------- local data
@@ -122,6 +207,48 @@ def read_file(store, path):
     from . import assistant
     result = assistant.read_cowork_file(store.settings['search_root'], path)
     return json.dumps(result)[:60000]
+
+
+def plan_moves(root, moves):
+    """Validate a file-organisation plan. Sources must exist; destinations must not. All inside root."""
+    base = Path(root).resolve()
+    if not moves:
+        raise ValueError('The move plan is empty.')
+    if len(moves) > 200:
+        raise ValueError('Move at most 200 files at once.')
+    plan, targets = [], set()
+    for move in moves:
+        source = cowork.resolve(root, move['source'])
+        if not source.is_file() or source.is_symlink():
+            raise ValueError('%s is not a file in the cowork folder.' % move['source'])
+        destination = cowork.resolve(root, move['destination'], exists=False)
+        if destination.suffix == '' and not destination.is_file():
+            destination = destination / source.name  # A folder was given.
+        if destination.exists() or destination in targets:
+            raise ValueError('%s already exists. Nothing is ever overwritten.' % destination.relative_to(base).as_posix())
+        if source == destination:
+            continue
+        targets.add(destination)
+        plan.append({'source': source.relative_to(base).as_posix(), 'destination': destination.relative_to(base).as_posix()})
+    if not plan:
+        raise ValueError('Nothing to move.')
+    return plan
+
+
+def apply_moves(root, plan):
+    done = []
+    for move in plan:
+        source = cowork.resolve(root, move['source'])
+        destination = cowork.resolve(root, move['destination'], exists=False)
+        if destination.exists():
+            continue  # Created meanwhile; never overwrite.
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        os.rename(source, destination)  # Same volume; fails instead of overwriting on Windows.
+        done.append(move)
+    skipped = len(plan) - len(done)
+    return 'Moved %s file%s%s.' % (len(done), '' if len(done) == 1 else 's',
+                                   ' (%s skipped because the destination already existed)' % skipped if skipped else '') + \
+           ''.join('\n%s → %s' % (m['source'], m['destination']) for m in done[:20])
 
 
 # ---------------------------------------------------------------- Google / Gmail

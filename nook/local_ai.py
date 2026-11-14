@@ -12,7 +12,7 @@ import socket
 
 PORT = 11435
 BASE = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parents[1] / 'vendor'
-MODEL = 'qwen3:1.7b'
+MODEL = 'qwen3:4b-instruct'
 _process = None
 _ready = False
 request_lock = threading.RLock()

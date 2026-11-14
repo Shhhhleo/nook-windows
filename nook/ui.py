@@ -368,21 +368,19 @@ class Settings(QWidget):
     def assistant_page(self):
         layout = self.page('Assistant')
         layout.addWidget(label('Snippy’s brain', 'section'))
-        layout.addWidget(label('Add a Claude API key from console.anthropic.com to give Snippy live web search, current news and the ability to act: open sites and apps, handle Gmail and WhatsApp, and pull Whop analytics. Usage is billed to your Anthropic account. Without a key, or when offline, Snippy uses the local AI below.', 'muted', True))
-        brain_form = QFormLayout()
+        layout.addWidget(label('Snippy runs entirely on this PC with a free, open model. No account, API key or subscription. It can search the web, read pages and the news, find, read, summarise and organise files in your cowork folder, manage to-dos, open sites and apps, and send WhatsApp messages. Moving files, creating files and sending messages always wait for your approval.', 'muted', True))
         from . import brain as brain_module
-        self.field(brain_form, 'anthropic_api_key', 'Claude API key', secret=True).setPlaceholderText('sk-ant-…')
-        self.field(brain_form, 'cloud_brain', 'Use Claude when a key is saved', 'check')
-        model = self.field(brain_form, 'claude_model_name', 'Claude model', 'combo', choices=list(brain_module.MODELS))
-        current = next((n for n, v in brain_module.MODELS.items() if v == brain_module.model_id(self.store)), 'Claude Opus 5.5')
-        model.setCurrentText(current)
-        self.form_card(layout, brain_form)
-        layout.addWidget(label('Opus is the most capable; Sonnet is faster and cheaper; Haiku is cheapest. Emails, WhatsApp messages and new files always wait for your approval.', 'muted', True))
-        layout.addWidget(label('Local AI and voice', 'section'))
-        layout.addWidget(label('Local AI is included with Notch and starts when you send a message. Voice is recognised offline. Choose the accent and microphone that match your voice.', 'muted', True))
         form = QFormLayout()
         self.field(form, 'user_name', 'Your name').setMaxLength(40)
-        self.model_field = self.field(form, 'ollama_model', 'Local model', 'combo', choices=[self.store.settings['ollama_model'] or assistant.local_ai.MODEL])
+        self.model_field = QComboBox()
+        for title, model in brain_module.MODELS.items():
+            self.model_field.addItem(title, model)
+        current = brain_module.model_id(self.store)
+        if self.model_field.findData(current) < 0:
+            self.model_field.addItem(current, current)
+        self.model_field.setCurrentIndex(self.model_field.findData(current))
+        self.model_field.setAccessibleName('AI model')
+        form.addRow('AI model', self.model_field)
         self.field(form, 'speak_replies', 'Read replies aloud', 'check')
         self.field(form, 'voice_hotkey', 'Hold Ctrl + Alt to talk', 'check')
         self.field(form, 'speech_language', 'Speech accent', 'combo', choices=['English (US)', 'English (India)'])
@@ -391,9 +389,10 @@ class Settings(QWidget):
         layout.addWidget(button('Refresh microphone choices', self.list_microphones))
         self.form_card(layout, form)
         row = QHBoxLayout()
-        row.addWidget(button('Check bundled AI', self.find_models))
+        row.addWidget(button('Check installed models', self.find_models))
+        row.addWidget(button('Download selected model', self.download_model))
         layout.addLayout(row)
-        self.model_status = label('Ollama and the starter model are included in the app folder.', 'muted', True)
+        self.model_status = label('Qwen3 4B Instruct is included with Notch. It fits a 4 GB graphics card; Qwen3 8B is smarter but slower and downloads about 5 GB the first time.', 'muted', True)
         layout.addWidget(self.model_status)
         layout.addWidget(label('The model stays ready during a conversation and releases memory when Snippy sleeps after one idle minute. The first reply after sleep needs a cold start. Clock and maths questions answer instantly without the model.', 'muted', True))
         layout.addWidget(label('Conversations are saved on this PC in the chat library. Snippy can search and read text files in your cowork folder, summarise them, and prepare new documents for review. Web lookup sends only the search topic to Wikipedia.', 'muted', True))
@@ -401,12 +400,12 @@ class Settings(QWidget):
         layout.addWidget(button('Open Snippy', self.notch.open_assistant))
         layout.addWidget(button('Run preference setup again', self.notch.cloud.onboard))
         layout.addWidget(label('Desktop notifications', 'section'))
-        layout.addWidget(label('Snippy announces new alerts from apps that send Windows notifications. In-app messages without a Windows alert cannot be detected. Notification text stays out of AI prompts and chat history.', 'muted', True))
+        layout.addWidget(label('Snippy tells you when Claude or Codex finish and raise a Windows notification. Add other apps, or leave the box blank for every app. In-app messages without a Windows alert cannot be detected. Notification text stays out of AI prompts and chat history.', 'muted', True))
         notifications = QFormLayout()
         enabled = self.field(notifications, 'notifications_enabled', 'Announce new notifications', 'check')
         self.field(notifications, 'notifications_preview', 'Show message previews', 'check')
         apps = self.field(notifications, 'notifications_apps', 'Only these apps')
-        apps.setPlaceholderText('Leave blank for all; or WhatsApp, Slack, Claude')
+        apps.setPlaceholderText('Claude, Codex (blank for every app)')
         layout.addLayout(notifications)
         self.notification_status = label(self.notch.notifications.status, 'muted', True)
         layout.addWidget(self.notification_status)
@@ -416,16 +415,18 @@ class Settings(QWidget):
         layout.addStretch()
 
     def find_models(self):
-        self.model_status.setText('Checking Ollama on this PC…')
+        self.model_status.setText('Checking the local AI on this PC…')
         def done(names):
-            current = self.model_field.currentText()
-            self.model_field.clear()
-            self.model_field.addItems(names)
-            if current in names:
-                self.model_field.setCurrentText(current)
-            self.model_status.setText('Choose a model, then Save settings.' if names else 'Ollama is running but no local models are installed.')
+            self.model_status.setText('Installed: ' + ', '.join(names) if names else 'No models installed yet.')
         self.notch.run_job('ollama-models', assistant.models, done,
             lambda _: self.model_status.setText('Bundled AI could not start. Check that the complete app folder is present.'))
+
+    def download_model(self):
+        model = self.model_field.currentData()
+        self.model_status.setText('Downloading %s from the Ollama library. This can take several minutes…' % model)
+        self.notch.run_job('ollama-pull', lambda: assistant.ollama_request('/api/pull', {'model': model, 'stream': False}, timeout=7200),
+            lambda _: self.model_status.setText('%s is ready. Save settings to use it.' % model),
+            lambda message: self.model_status.setText('Download failed: ' + message))
 
     def choose_color(self, field):
         color = QColorDialog.getColor(QColor(field.text()), self)
@@ -529,8 +530,7 @@ class Settings(QWidget):
         self.store.settings['order'] = [item.text() for item in items]
         self.store.settings['enabled'] = [item.text() for item in items if item.checkState() == Qt.Checked]
         self.store.settings['screen'] = self.screen_combo.currentIndex()
-        from .brain import MODELS, DEFAULT_MODEL
-        self.store.settings['claude_model'] = MODELS.get(self.store.settings.get('claude_model_name'), DEFAULT_MODEL)
+        self.store.settings['ollama_model'] = self.model_field.currentData()
         self.store.save()
         if self.store.settings.get('whatsapp_autopilot') and self.store.settings.get('whatsapp_contacts'):
             self.notch.whatsapp.start()
