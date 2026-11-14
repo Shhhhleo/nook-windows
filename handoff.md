@@ -2,7 +2,7 @@
 
 ## 14 November 2026 — Snippy split out of Notch
 
-Snippy now lives in its own project at `D:\snippy AI` (public repo `Dabomb1221/snippy`, fresh history): standalone tray app, own settings/onboarding, data in `%LOCALAPPDATA%\Snippy` (copied once from `%LOCALAPPDATA%\Nook` on first run), build output `dist/Snippy`. The AI runtime (`vendor/`: Ollama, models, Vosk speech) moved there too.
+Snippy now lives in its own project at `D:\snippy AI` (public repo https://github.com/Shhhhleo/snippy, fresh history): standalone tray app, own settings/onboarding, data in `%LOCALAPPDATA%\Snippy` (copied once from `%LOCALAPPDATA%\Nook` on first run), build output `dist/Snippy`. The AI runtime (`vendor/`: Ollama, models, Vosk speech) moved there too.
 
 This repo is now Notch only: notch, widgets, desktop tiles and settings. Removed: snippy/chat_ui/workspace/brain/actions/approvals/assistant/whatsapp/contacts_ui/connections_ui/mcp_client/conversations/cowork/local_ai/speech/voice/news/notifications modules, the Assistant settings page, MCP/Gmail/Whop/WhatsApp connections, AI and speech build steps, notification-listener packaging. Google sign-in now asks for Calendar only (`services.google_token`). `build.ps1` outputs to `dist/Notch/Nook`; `launch.cmd` starts that build or falls back to source. The pre-split build in `dist/Snippy/Nook` (Notch + Snippy together) was kept; older `dist/Nook` and `dist/Reference` were deleted. Everything below this section describes the combined app before the split.
 

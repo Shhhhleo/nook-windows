@@ -1,6 +1,6 @@
 # Notch for Windows
 
-Snippy, the cloud assistant that used to live in Notch, is now a separate app: https://github.com/Dabomb1221/snippy
+Snippy, the cloud assistant that used to live in Notch, is now a separate app: https://github.com/Shhhhleo/snippy
 
 A local, customisable notch at the centre of the top edge of a selected display. Built with Python and native Qt widgets. Hover to expand, move away to collapse. Windows 10/11 x64.
 
