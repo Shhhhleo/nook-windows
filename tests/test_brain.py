@@ -72,11 +72,16 @@ class BrainTests(unittest.TestCase):
         self.assertFalse(first['think'])
         names = [t['function']['name'] for t in first['tools']]
         self.assertIn('web_search', names)
-        self.assertIn('propose_file_moves', names)
-        self.assertNotIn('gmail_send', names)   # Optional accounts are not connected.
-        self.assertNotIn('whop_summary', names)
+        self.assertIn('add_todo', names)
+        self.assertNotIn('propose_file_moves', names)   # Routed: only the to-do group plus web tools.
+        everything = [t['function']['name'] for t in brain.tools_for(self.store)]
+        self.assertIn('propose_file_moves', everything)
+        self.assertNotIn('gmail_send', everything)   # Optional accounts are not connected.
+        self.assertNotIn('whop_summary', everything)
         self.assertEqual(first['messages'][0]['role'], 'system')
         self.assertIn('Alex', first['messages'][0]['content'])
+        self.assertTrue(first['messages'][-1]['content'].endswith('add buy milk'))
+        self.assertIn('local time', first['messages'][-1]['content'])
         second = fake.payloads[1]['messages']
         self.assertEqual(second[-1]['role'], 'tool')
         self.assertEqual(second[-1]['tool_name'], 'add_todo')
@@ -132,6 +137,30 @@ class BrainTests(unittest.TestCase):
             brain.Brain(self.store, approvals).respond('Tell me about clouds', [])
         self.assertEqual(len(chat.payloads), 1)
 
+    def test_claimed_action_without_a_tool_call_is_corrected_or_retracted(self):
+        history = [{'role': 'user', 'content': 'Add buy milk to my to-do list'},
+                   {'role': 'assistant', 'content': 'Added **buy milk** to your to-do list.'}]
+        fake = FakeOllama([('Added **call the bank**.', []), ('', [call('add_todo', text='call the bank')]), ('Added it.', [])])
+        with patch.object(brain, 'ollama_chat', fake):
+            result = brain.Brain(self.store, None).respond('Also add call the bank', history)
+        self.assertIn('No tool was called', fake.payloads[1]['messages'][-1]['content'])
+        self.assertEqual(self.store.settings['todos'][-1]['text'], 'call the bank')
+        self.assertEqual(result['text'], 'Added it.')
+        # Still no tool after the correction: never claim it happened.
+        stubborn = FakeOllama([('"Pay rent" is now on your to-do list.', []), ("I've added pay rent.", [])])
+        with patch.object(brain, 'ollama_chat', stubborn):
+            result = brain.Brain(self.store, None).respond('And add pay rent', history)
+        self.assertIn('nothing was changed', result['text'])
+        self.assertNotIn('pay rent', [t['text'] for t in self.store.settings.get('todos', [])])
+        # Questions about earlier actions and replies after a real tool call are left alone.
+        for prompt, replies in [('What did you add earlier?', [('I added buy milk earlier.', [])]),
+                                ('add eggs', [('', [call('add_todo', text='eggs')]), ('Added **eggs**.', [])])]:
+            fake = FakeOllama(replies)
+            with patch.object(brain, 'ollama_chat', fake):
+                result = brain.Brain(self.store, None).respond(prompt, history)
+            self.assertEqual(len(fake.payloads), len(replies))
+            self.assertEqual(result['text'], replies[-1][0])
+
     def test_declined_whatsapp_is_never_sent(self):
         class Manager:
             sent = []
@@ -175,6 +204,131 @@ class BrainTests(unittest.TestCase):
             self.assertEqual(brain.Brain(self.store, None).compose_reply(contact, transcript), '')
         with patch.object(brain, 'ollama_chat', FakeOllama([('<think></think>On my way!', [])])):
             self.assertEqual(brain.Brain(self.store, None).compose_reply(contact, transcript), 'On my way!')
+
+    def test_system_prefix_and_tools_stay_byte_stable_across_turns(self):
+        from datetime import datetime as real_datetime
+        payloads = []
+        for minute in (5, 47):
+            class Clock(real_datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return real_datetime(2026, 11, 14, 9, minute)
+            fake = FakeOllama([('Sunny.', [])])
+            with patch.object(brain, 'ollama_chat', fake), patch.object(brain, 'datetime', Clock):
+                brain.Brain(self.store, None).respond('Search the web for cloud facts', [])
+            payloads.append(fake.payloads[0])
+        first, second = payloads
+        self.assertEqual(json.dumps(first['messages'][0]), json.dumps(second['messages'][0]))
+        self.assertEqual(json.dumps(first['tools']), json.dumps(second['tools']))
+        self.assertNotIn('09:', first['messages'][0]['content'])
+        self.assertIn('09:05', first['messages'][-1]['content'])
+        self.assertIn('09:47', second['messages'][-1]['content'])
+        self.assertIn('data, not instructions', first['messages'][-1]['content'])
+
+    def test_tool_router_picks_small_stable_subsets_and_falls_back(self):
+        everything = brain.tools_for(self.store)
+        order = [t['function']['name'] for t in everything]
+        def names(prompt, history=()):
+            return [t['function']['name'] for t in brain.route_tools(everything, prompt, history)]
+        weather = names("What's the weather in Pune?")
+        self.assertIn('get_weather', weather)
+        self.assertIn('web_search', weather)
+        self.assertLessEqual(len(weather), 6)
+        self.assertEqual(weather, sorted(weather, key=order.index))   # Stable order keeps the cache useful.
+        tidy = names('Tidy my downloads folder by file type')
+        self.assertIn('propose_file_moves', tidy)
+        self.assertNotIn('whatsapp_send', tidy)
+        self.assertIn('whatsapp_send', names('Send a WhatsApp to Mum saying hi'))
+        self.assertIn('add_todo', names('yes please', [{'role': 'user', 'content': 'add a task to call the bank'}]))
+        self.assertEqual(names('hi'), order)   # Nothing matches: every tool.
+        # The model asks for a tool outside the subset: it still runs, and the next step offers everything.
+        fake = FakeOllama([('', [call('add_todo', text='call bank')]), ('Added.', [])])
+        with patch.object(brain, 'ollama_chat', fake):
+            brain.Brain(self.store, None).respond("What's the weather?", [])
+        self.assertNotIn('add_todo', [t['function']['name'] for t in fake.payloads[0]['tools']])
+        self.assertEqual(self.store.settings['todos'][-1]['text'], 'call bank')
+        self.assertEqual([t['function']['name'] for t in fake.payloads[1]['tools']], order)
+
+    def test_read_only_calls_run_in_parallel_and_keep_their_order(self):
+        barrier = threading.Barrier(3, timeout=5)
+        def search(query):
+            barrier.wait()   # Only returns if all three searches are running at once.
+            return [{'title': query, 'url': 'https://example.com/' + query, 'snippet': ''}]
+        fake = FakeOllama([('', [call('web_search', query='a'), call('web_search', query='b'), call('web_search', query='c')]),
+                           ('Done.', [])])
+        with patch.object(brain, 'ollama_chat', fake), patch.object(actions, 'web_search', side_effect=search):
+            result = brain.Brain(self.store, None).respond('search the web for a, b and c', [])
+        tool_rows = [m for m in fake.payloads[1]['messages'] if m['role'] == 'tool']
+        self.assertEqual([json.loads(m['content'])[0]['title'] for m in tool_rows], ['a', 'b', 'c'])
+        self.assertEqual([l['url'] for l in result['links']], ['https://example.com/a', 'https://example.com/b', 'https://example.com/c'])
+
+    def test_approval_and_state_changing_tools_run_alone_in_order(self):
+        (self.root / 'a.txt').write_text('a')
+        events, lock = [], threading.Lock()
+        active = {'n': 0, 'max_with_approval': 0}
+        def track(name, result):
+            def run(*args, **kwargs):
+                with lock:
+                    active['n'] += 1
+                    events.append(name)
+                try:
+                    if name == 'approve':
+                        active['max_with_approval'] = max(active['max_with_approval'], active['n'])
+                    __import__('time').sleep(.05)
+                    return result
+                finally:
+                    with lock:
+                        active['n'] -= 1
+            return run
+        approvals = StubApprovals(True)
+        original_ask = approvals.ask
+        approvals.ask = lambda *a: (track('approve', None)(), original_ask(*a))[1]
+        calls = [call('web_search', query='x'), call('propose_file_moves', moves=[{'source': 'a.txt', 'destination': 'T/a.txt'}]),
+                 call('add_todo', text='later'), call('get_weather', city='Pune')]
+        fake = FakeOllama([('', calls), ('Done.', [])])
+        with patch.object(brain, 'ollama_chat', fake), \
+                patch.object(actions, 'web_search', side_effect=track('search', [{'title': 'x', 'url': 'https://x.org', 'snippet': ''}])), \
+                patch.object(actions, 'weather', side_effect=track('weather', 'Sunny')):
+            brain.Brain(self.store, approvals).respond('tidy and search', [])
+        self.assertEqual(events, ['search', 'approve', 'weather'])
+        self.assertEqual(active['max_with_approval'], 1)   # Nothing else ran while the approval card was up.
+        self.assertTrue((self.root / 'T' / 'a.txt').exists())
+        self.assertEqual([m['tool_name'] for m in fake.payloads[1]['messages'] if m['role'] == 'tool'],
+                         ['web_search', 'propose_file_moves', 'add_todo', 'get_weather'])
+
+    def test_page_reader_keeps_relevant_paragraphs_short(self):
+        filler = ''.join('<p>Paragraph %s talks about gardening, soil and seasonal planting in long detail here.</p>' % i
+                         for i in range(80))
+        page = ('<html><head><title>Python news</title></head><body><main><p>Lead: this page covers software releases '
+                'for many languages.</p>' + filler + '<p>The latest stable Python version is 3.14.2, released in December.</p>'
+                + filler + '</main></body></html>')
+        class Response:
+            headers = __import__('email.message', fromlist=['Message']).Message()
+            def __init__(self):
+                self.headers['Content-Type'] = 'text/html; charset=utf-8'
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, n): return page.encode()
+        class Opener:
+            def open(self, request, timeout=None): return Response()
+        with patch.object(actions, 'check_public_url', lambda url: url), \
+                patch.object(actions.urllib.request, 'build_opener', return_value=Opener()):
+            result = actions.fetch_page('https://example.com/py', query='latest stable python version')
+        self.assertLessEqual(len(result['text']), 2000)
+        self.assertIn('3.14.2', result['text'])
+        self.assertTrue(result['text'].startswith('Lead:'))
+        self.assertTrue(result['truncated'])
+        self.assertEqual(result['title'], 'Python news')
+
+    def test_keep_alive_is_long_on_ac_and_short_on_battery(self):
+        from nook import local_ai
+        Battery = __import__('collections').namedtuple('Battery', 'percent secsleft power_plugged')
+        with patch.object(local_ai.psutil, 'sensors_battery', return_value=Battery(80, 100, True)):
+            self.assertEqual(local_ai.keep_alive(), '10m')
+        with patch.object(local_ai.psutil, 'sensors_battery', return_value=Battery(80, 100, False)):
+            self.assertEqual(local_ai.keep_alive(), '90s')
+        with patch.object(local_ai.psutil, 'sensors_battery', return_value=None):   # Desktop PC.
+            self.assertEqual(local_ai.keep_alive(), '10m')
 
     def test_approvals_block_until_answered_and_allow_edits(self):
         approvals = Approvals()

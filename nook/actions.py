@@ -103,11 +103,39 @@ def web_search(query, limit=6):
     except (OSError, ValueError):
         rows = []
     if not rows:
+        # DuckDuckGo (like Bing, Brave and Startpage) answers scripted requests with a bot check, so fall back
+        # to keyless public APIs: published research from OpenAlex first, then Wikipedia.
+        try:
+            rows = scholar_search(query, 3)
+        except (OSError, ValueError):
+            rows = []
         from . import assistant
         result = assistant.web_lookup(query)
-        rows = [{'title': r['title'], 'url': r['url'], 'snippet': r['detail']} for r in result.get('links', [])]
+        rows += [{'title': r['title'], 'url': r['url'], 'snippet': r['detail']} for r in result.get('links', [])]
     if not rows:
         raise ValueError('Web search returned nothing. Check the internet connection or try different words.')
+    return rows
+
+
+def scholar_search(query, limit=4):
+    """Published books and papers from OpenAlex (keyless). Each row carries its abstract, because the
+    publisher pages behind DOIs are usually paywalled or block scripted reads."""
+    url = 'https://api.openalex.org/works?' + urllib.parse.urlencode({
+        'search': query[:200], 'filter': 'has_abstract:true', 'per-page': limit,
+        'select': 'title,doi,publication_year,primary_location,abstract_inverted_index,authorships'})
+    with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'Notch-Snippy'}), timeout=12) as response:
+        works = json.loads(response.read(2_000_000)).get('results', [])
+    rows = []
+    for work in works:
+        index = work.get('abstract_inverted_index') or {}
+        words = sorted((spot, word) for word, spots in index.items() for spot in spots)
+        abstract = ' '.join(word for _, word in words)
+        link = work.get('doi') or (work.get('primary_location') or {}).get('landing_page_url') or ''
+        if not link.startswith('https://') or len(abstract) < 80:
+            continue
+        authors = ', '.join(a.get('author', {}).get('display_name', '') for a in (work.get('authorships') or [])[:3])
+        title = '%s (%s%s)' % (work.get('title') or 'Untitled', authors + ', ' if authors else '', work.get('publication_year') or 'n.d.')
+        rows.append({'title': _text(title), 'url': link, 'snippet': abstract[:300], 'abstract': abstract[:4000]})
     return rows
 
 
@@ -132,8 +160,38 @@ def check_public_url(url):
     return url
 
 
-def fetch_page(url, limit=6000):
-    """Readable text of a public https page, bounded in size. Never local or private addresses."""
+STOPWORDS = set('the and for are was were with that this from what when where which who how why can you your about into '
+                'have has had will would should could does did not but its it\'s than then them they their there these those '
+                'some any all more most much many also just only over under very latest current today'.split())
+
+
+def query_terms(query):
+    return {w for w in re.findall(r'[a-z0-9]{3,}', (query or '').casefold()) if w not in STOPWORDS}
+
+
+def relevant_text(blocks, query, limit):
+    """Keep the lead paragraph plus the paragraphs that mention the query terms most, in page order."""
+    blocks = [b for b in blocks if len(b) >= 40] or blocks
+    terms = query_terms(query)
+    if not terms or sum(len(b) for b in blocks) <= limit:
+        return ' '.join(blocks)[:limit]
+    def score(block):
+        words = re.findall(r'[a-z0-9]{3,}', block.casefold())
+        return sum(1 for w in words if w in terms) + 3 * len(terms & set(words))
+    chosen, used = {0}, len(blocks[0]) + 1
+    for index in sorted(range(1, len(blocks)), key=lambda i: (-score(blocks[i]), i)):
+        if used >= limit or score(blocks[index]) == 0:
+            break
+        chosen.add(index)
+        used += len(blocks[index]) + 1
+    return ' … '.join(blocks[i] for i in sorted(chosen))[:limit]
+
+
+def fetch_page(url, limit=1800, query=''):
+    """Readable text of a public https page, bounded in size. Never local or private addresses.
+
+    Small local models prefill slowly, so only ~1,800 characters come back: the lead paragraph
+    plus the paragraphs that best match the user's question."""
     check_public_url(url.strip())
     opener = urllib.request.build_opener(SafeRedirect)
     request = urllib.request.Request(url.strip(), headers={'User-Agent': BROWSER_AGENT, 'Accept': 'text/html,text/plain'})
@@ -146,8 +204,13 @@ def fetch_page(url, limit=6000):
     title = _text((re.search(r'<title[^>]*>(.*?)</title>', page, re.S | re.I) or [None, ''])[1])
     page = re.sub(r'<(script|style|noscript|svg|nav|footer|header|form)\b.*?</\1>', ' ', page, flags=re.S | re.I)
     body = re.search(r'<(article|main)\b.*?</\1>', page, re.S | re.I)
-    text = _text(body.group(0) if body and len(_text(body.group(0))) > 400 else page)
-    return {'url': url, 'title': title[:200], 'text': text[:limit], 'truncated': len(text) > limit}
+    source = body.group(0) if body and len(_text(body.group(0))) > 400 else page
+    source = re.sub(r'<head\b.*?</head>', ' ', source, flags=re.S | re.I)
+    parts = re.split(r'(?i)</?(?:p|div|li|h[1-6]|br|tr|section|blockquote|pre)\b[^>]*>', source)
+    blocks = [t for t in (_text(p) for p in parts) if t]
+    full = sum(len(b) for b in blocks)
+    text = relevant_text(blocks, query, limit) if blocks else ''
+    return {'url': url, 'title': title[:200], 'text': text, 'truncated': full > len(text)}
 
 
 # ---------------------------------------------------------------- local data

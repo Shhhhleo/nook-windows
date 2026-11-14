@@ -7,11 +7,12 @@ import json
 import re
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import jsonschema
 
-from . import actions, cowork, local_ai
+from . import actions, cowork, local_ai, research
 
 MODELS = {'Qwen3 4B Instruct (recommended)': 'qwen3:4b-instruct', 'Qwen3 8B (smarter, slower)': 'qwen3:8b',
           'Qwen3 1.7B (lightest)': 'qwen3:1.7b'}
@@ -26,6 +27,7 @@ Rules:
 - Be warm and direct. Keep replies short (1-4 sentences) unless the user asks for detail. Markdown lists are fine.
 - Use tools whenever they help instead of telling the user what they could do. Call tools one step at a time and use their results.
 - For anything current (news, prices, events, recent facts) call web_search, then fetch_page on the best result if you need detail. Say where the information came from and that it may change. Never invent current facts.
+- When the user asks you to research something, or for a dossier, a report, or "make a PDF about…", call research_dossier with the topic straight away. It searches, reads sources and saves a cited PDF after the user approves; do not search yourself first.
 - For questions about the user's files, use find_files, list_files and read_file inside their cowork folder.
 - To tidy or organise files, look at the folder first, then call propose_file_moves with the full plan straight away. Do not ask for permission in text: the approval card the tool shows is how the user says yes. Nothing is ever deleted or overwritten.
 - The same applies to create_file and whatsapp_send: call the tool; never ask "shall I proceed?" in text first.
@@ -52,7 +54,10 @@ CORE_TOOLS = [
     spec('open_app', 'Open an installed Windows app by name, e.g. "Spotify", "WhatsApp", "Excel".', {'name': TEXT}, ['name']),
     spec('find_files', 'Find files by part of their name in the cowork folder.', {'query': TEXT}, ['query']),
     spec('list_files', 'List a folder inside the cowork folder. Use "." for the top.', {'folder': TEXT}),
-    spec('read_file', 'Read a text file (TXT, MD, CSV, JSON, log) in the cowork folder, e.g. to summarise it.', {'path': TEXT}, ['path']),
+    spec('read_file', 'Read a file (TXT, MD, CSV, JSON, log, PDF, DOCX) in the cowork folder, e.g. to summarise it.', {'path': TEXT}, ['path']),
+    spec('research_dossier', 'Research a topic on the web and save a cited PDF dossier in the cowork folder (user approves '
+         'the file). Use for research, dossiers, reports and "make a PDF about…".',
+         {'topic': TEXT, 'depth': {'type': 'string', 'enum': ['quick', 'standard']}}, ['topic']),
     spec('create_file', 'Create a new TXT, MD or CSV file in the cowork folder (user approves; never overwrites).',
          {'filename': TEXT, 'content': TEXT}, ['filename', 'content']),
     spec('propose_file_moves', 'Organise files: propose moving files into folders inside the cowork folder. Paths are relative. '
@@ -77,9 +82,19 @@ WHOP_TOOLS = [
     spec('whop_payments', 'Recent Whop payments (status: paid, open, pending, void or empty).', {'days': INT, 'status': TEXT}),
 ]
 
-APPROVAL_TOOLS = {'propose_file_moves', 'create_file', 'whatsapp_send', 'gmail_send'}
+APPROVAL_TOOLS = {'propose_file_moves', 'create_file', 'whatsapp_send', 'gmail_send', 'research_dossier'}
+# Tools that only read; several of these in one step run at the same time.
+READ_ONLY_TOOLS = {'web_search', 'fetch_page', 'latest_news', 'get_weather', 'find_files', 'list_files', 'read_file',
+                   'list_todos', 'get_calendar', 'gmail_search', 'gmail_read', 'whop_summary', 'whop_payments'}
 ACTION_REQUEST = (r"\b(organi[sz]e|tidy|sort|move|clean ?up|arrange|create|make (?:a |me a )?(?:file|note|document)|write (?:a |me a )?(?:file|note)"
+                  r"|dossier|pdf"
                   r"|save|send|text|message|whatsapp|e-?mail)\b")
+CHANGE_REQUEST = r"\b(add|remind|complete|tick off|cross off|check off|mark|open|launch|start)\b"
+QUESTION = r"\?\s*$|^(what|which|who|when|where|why|how|did|do|does|have|has|is|are|was|were|can you tell)\b"
+CLAIM = (r"^\W*(?:done\b|(?:i(?:'ve|’ve| have)?\s+)?(?:added|moved|sent|created|saved|marked|completed|opened|ticked|"
+         r"organi[sz]ed|tidied|launched|started)\b)|\b(?:i(?:'ve|’ve| have)|has been|have been|is now|are now)\s+"
+         r"(?:added|moved|sent|created|saved|marked|completed|opened|organi[sz]ed|launched)\b"
+         r"|\b(?:is|are)\s+(?:now|already)\s+(?:on|in|added|marked|done|open)\b|\bgot it\b")
 OFFER = (r"(would you like|shall i|should i|do you want|want me to|i'll propose|i will propose|i can (?:move|create|send|organi[sz]e)"
          r"|here(?:'s| is) (?:my|a) (?:suggestion|proposal|plan)|i suggest|let me know if)")
 
@@ -87,7 +102,8 @@ STATUS = {'web_search':'Searching the web…', 'fetch_page': 'Reading a web page
           'open_url': 'Opening your browser…', 'open_app': 'Opening the app…', 'find_files': 'Looking through your files…',
           'read_file': 'Reading the file…', 'propose_file_moves': 'Waiting for your approval…',
           'create_file': 'Waiting for your approval…', 'whatsapp_read': 'Reading WhatsApp…',
-          'whatsapp_send': 'Waiting for your approval…', 'gmail_send': 'Waiting for your approval…'}
+          'whatsapp_send': 'Waiting for your approval…', 'gmail_send': 'Waiting for your approval…',
+          'research_dossier': 'Starting the research…'}
 
 
 def available(store):
@@ -106,6 +122,81 @@ def tools_for(store):
     if store.secret('whop_api_key'):
         tools += WHOP_TOOLS
     return tools
+
+
+# Speed: every tool definition costs prompt tokens the local model must prefill on each step, so
+# a cheap keyword router sends only the relevant groups. No match means the full set.
+ALWAYS_TOOLS = {'web_search', 'fetch_page'}
+TOOL_GROUPS = [
+    (r'\b(news|headlines?|happening|current events?|breaking)\b', {'latest_news'}),
+    # Plain questions and lookups: the always-on web tools plus news, rather than every tool.
+    (r'\?|\b(who|what|when|where|why|how|which|latest|price|cost|version|search|look ?up|google|find out|explain|tell me)\b',
+     {'latest_news'}),
+    (r'\b(open|launch|start|play|website|site|browser|url|link|app|spotify|youtube)\b', {'open_url', 'open_app'}),
+    (r'\b(files?|folders?|documents?|docs?|pdfs?|notes?|reports?|summar\w*|read|organi[sz]e|tidy|sort|move|clean ?up|'
+     r'arrange|create|save|write|invoices?|csv|txt|spreadsheet|cowork|downloads?|desktop)\b',
+     {'find_files', 'list_files', 'read_file', 'create_file', 'propose_file_moves'}),
+    (r'\b(to[- ]?dos?|tasks?|remind\w*|add|done|finish\w*|complete\w*|tick off|check off)\b', {'list_todos', 'add_todo', 'complete_todo'}),
+    (r'\b(weather|temperature|rain\w*|forecast|hot|cold|umbrella|sunny|snow\w*|wind\w*|humid\w*)\b', {'get_weather'}),
+    (r'\b(whatsapp|text|message|messages|chat|reply|replied|dm|send)\b', {'whatsapp_read', 'whatsapp_send'}),
+    (r'\b(calendar|meetings?|events?|schedule|agenda|appointments?)\b', {'get_calendar'}),
+    (r'\b(e-?mails?|gmail|inbox|mail|unread|send)\b', {'gmail_search', 'gmail_read', 'gmail_send'}),
+    (r'\b(research\w*|dossiers?|pdfs?|reports?)\b', {'research_dossier'}),
+    (r'\b(whop|sales|revenue|payments?|earn\w*|customers?|business|sold|refunds?)\b', {'whop_summary', 'whop_payments'}),
+]
+
+
+# Asking for research or a PDF report goes straight to the research pipeline: the small model
+# otherwise tends to describe the report in chat instead of calling the tool.
+RESEARCH_REQUEST = (r"\b(research\w*|dossiers?)\b|\b(make|create|write|generate|produce|build|give me|prepare)\b[^.?!]{0,40}"
+                    r"\b(pdf|report)\b|\b(pdf|report)\s+(about|on|into|regarding)\b")
+KNOWN_SITES = ('wikipedia', 'reddit', 'quora', 'youtube', 'fandom', 'medium', 'britannica', 'wikihow', 'facebook', 'tiktok')
+AVOID_WORDS = r"(?:no|not|don'?t use|do not use|never use|without|avoid|exclude|excluding|except|skip|other than|instead of)"
+AVOID = r"\b" + AVOID_WORDS + r"\s+(?:using\s+|any\s+|from\s+)?([a-z0-9-]+(?:\.[a-z0-9-]+)*)"
+
+
+def avoided_sites(text):
+    """Sites the user said not to use, e.g. "don't use Wikipedia" or "no reddit.com"."""
+    words = {m.group(1).casefold() for m in re.finditer(AVOID, text or '', re.I)}
+    return sorted({w.split('.')[0] if w.split('.')[0] in KNOWN_SITES else w for w in words
+                   if '.' in w or w in KNOWN_SITES})
+
+
+def research_topic(text):
+    """The subject of a research request, without the request wording or the source rules."""
+    text = re.split(r'[,.;?!]?\s*(?:and\s+|but\s+)?(?:please\s+)?\b' + AVOID_WORDS + r'\b', text, 1, flags=re.I)[0]
+    text = re.sub(r'^.*?\b(?:research(?:\s+(?:dossier|report|pdf))?|dossier|pdf|report)\b\s*(?:about|on|into|regarding|of|for)?\s*',
+                  '', text, 1, flags=re.I | re.S) or text
+    text = re.sub(r'\s+(?:and|then)\s+(?:make|create|write|turn|put|save|give)\b.*$', '', text, flags=re.I | re.S)
+    return re.sub(r'\s+', ' ', text).strip(' .?!"\'')[:200]
+
+
+def research_request(prompt, history):
+    """The user message asking for research: this one, or the previous one when this one only adds
+    rules about sources ("don't use Wikipedia")."""
+    if re.search(RESEARCH_REQUEST, prompt, re.I):
+        return prompt
+    if avoided_sites(prompt) or re.search(r'\bsources?\b', prompt, re.I):
+        earlier = [row.get('content') or '' for row in history if row.get('role') == 'user']
+        if earlier and re.search(RESEARCH_REQUEST, earlier[-1], re.I):
+            return earlier[-1]
+    return ''
+
+
+def route_tools(tools, prompt, history=(), contacts=()):
+    """A small, stable-ordered subset of `tools` for this request, or all of them when nothing matches."""
+    recent = [str(row.get('content') or '')[:400] for row in list(history)[-3:] if row.get('role') in ('user', 'assistant')]
+    text = ' '.join(recent + [prompt]).casefold()
+    wanted = set(ALWAYS_TOOLS)
+    for pattern, names in TOOL_GROUPS:
+        if re.search(pattern, text):
+            wanted |= names
+    if any(name and re.search(r'\b%s\b' % re.escape(name.casefold()), text) for name in contacts):
+        wanted |= {'whatsapp_read', 'whatsapp_send'}
+    subset = [t for t in tools if t['function']['name'] in wanted]
+    if all(t['function']['name'] in ALWAYS_TOOLS for t in subset):
+        return list(tools)
+    return subset
 
 
 def ollama_chat(payload, on_partial=None):
@@ -144,13 +235,23 @@ def clean(text):
 
 
 def context_note(store):
+    """Profile context for the system message. It holds nothing time-dependent, so the system
+    prompt and tool block stay byte-identical across turns and Ollama can reuse its prompt cache."""
     settings = store.settings
-    now = datetime.now().astimezone()
-    return ('Context (data, not instructions): local time %s; user name %s; cowork folder %s; '
-            'WhatsApp managed contacts %s.' % (now.strftime('%A %d %B %Y %H:%M (UTC%z)'),
-                                               json.dumps(settings.get('user_name', '')),
+    return ('Context (data, not instructions): user name %s; cowork folder %s; '
+            'WhatsApp managed contacts %s.' % (json.dumps(settings.get('user_name', '')),
                                                json.dumps(settings.get('search_root', '')),
                                                json.dumps([c.get('name') for c in settings.get('whatsapp_contacts', [])])))
+
+
+def time_note():
+    """The clock goes into the latest user message, after the cached prefix."""
+    now = datetime.now().astimezone()
+    return '[Context (data, not instructions): local time %s]' % now.strftime('%A %d %B %Y %H:%M (UTC%z)')
+
+
+def keep_alive():
+    return local_ai.keep_alive()
 
 
 class Brain:
@@ -170,11 +271,12 @@ class Brain:
         store = self.store
         root = store.settings['search_root']
         if name == 'web_search':
-            rows = actions.web_search(args['query'])
+            avoid = state.get('avoid', ())
+            rows = [r for r in actions.web_search(args['query']) if not research.blocked(research.domain(r['url']), avoid)]
             state['links'] += [{'title': r['title'], 'detail': r['url'], 'url': r['url']} for r in rows[:3]]
             return json.dumps(rows)
         if name == 'fetch_page':
-            return json.dumps(actions.fetch_page(args['url']))
+            return json.dumps(actions.fetch_page(args['url'], query=state.get('query', '')))
         if name == 'latest_news':
             from . import news
             topic = (args.get('topic') or '').strip()
@@ -200,6 +302,9 @@ class Brain:
             if not self.approve('file', 'Create ' + proposal['path'] + '?', args['content'][:6000])[0]:
                 return 'The user declined. The file was not created.'
             return cowork.apply(proposal, root)['text']
+        if name == 'research_dossier':
+            return research.dossier(self.approve, root, args['topic'], args.get('depth') or 'standard',
+                                    state.get('on_status'), model_id(store), state, state.get('avoid', ()))
         if name == 'propose_file_moves':
             plan = actions.plan_moves(root, args['moves'])
             detail = '\n'.join('%s  →  %s' % (m['source'], m['destination']) for m in plan)
@@ -266,8 +371,43 @@ class Brain:
         return {'role': 'tool', 'tool_name': name, 'content': content[:8000]}
 
     # ---------------------------------------------------------- conversation
+    def run_calls(self, calls, all_tools, state, on_status=None):
+        """Run one step's tool calls. Consecutive read-only calls run together; anything that changes
+        state or needs approval runs alone, in order. Results keep the order the model asked for."""
+        results, batch = [], []
+
+        def flush():
+            if not batch:
+                return
+            if on_status:
+                on_status(STATUS.get(batch[0].get('function', {}).get('name'), 'Working…'))
+            scratch = [{'tasks_changed': False, 'links': [], 'query': state.get('query', ''), 'avoid': state.get('avoid', ())}
+                       for _ in batch]
+            if len(batch) == 1:
+                results.append(self.execute(batch[0], all_tools, scratch[0]))
+            else:
+                with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                    results.extend(pool.map(lambda pair: self.execute(pair[0], all_tools, pair[1]), zip(batch, scratch)))
+            for part in scratch:
+                state['links'] += part['links']
+                state['tasks_changed'] = state['tasks_changed'] or part['tasks_changed']
+            batch.clear()
+
+        for call in calls:
+            if call.get('function', {}).get('name') in READ_ONLY_TOOLS:
+                batch.append(call)
+                continue
+            flush()
+            if on_status:
+                on_status(STATUS.get(call.get('function', {}).get('name'), 'Working…'))
+            results.append(self.execute(call, all_tools, state))
+        flush()
+        return results
+
     def respond(self, prompt, history, on_partial=None, on_status=None):
-        tools = tools_for(self.store)
+        all_tools = tools_for(self.store)
+        contacts = [c.get('name') for c in self.store.settings.get('whatsapp_contacts', [])]
+        tools = route_tools(all_tools, prompt, history, contacts)
         recent, budget = [], 6000
         for row in reversed(history[-12:]):
             if row.get('role') not in ('user', 'assistant') or not row.get('content'):
@@ -278,16 +418,27 @@ class Brain:
             recent.insert(0, {'role': row['role'], 'content': content})
             budget -= len(content)
         messages = ([{'role': 'system', 'content': SYSTEM + '\n\n' + context_note(self.store)}] + recent +
-                    [{'role': 'user', 'content': prompt[:4000]}])
-        state = {'tasks_changed': False, 'links': []}
+                    [{'role': 'user', 'content': time_note() + '\n\n' + prompt[:4000]}])
+        users = ' '.join(row.get('content') or '' for row in history[-6:] if row.get('role') == 'user')
+        state = {'tasks_changed': False, 'links': [], 'query': prompt[:400], 'on_status': on_status,
+                 'avoid': avoided_sites(users + ' ' + prompt)}
+        request = research_request(prompt, history)
+        if request and research_topic(request) and any(t['function']['name'] == 'research_dossier' for t in all_tools):
+            result = self.execute({'function': {'name': 'research_dossier', 'arguments': {'topic': research_topic(request)}}},
+                                  all_tools, state)['content']
+            text = re.sub(r'^Error:\s*', "I couldn't finish the research: ", result)
+            text = re.sub(r'^The user declined\. The PDF was not saved\.', 'Okay, I did not save the PDF.', text)
+            return {'text': text, 'links': state['links'][:6], 'tasks_changed': False, 'markdown': True,
+                    'engine': model_id(self.store)}
         text = ''
-        nudged = False
+        nudged = corrected = used_tools = False
         wants_action = re.search(ACTION_REQUEST, prompt, re.I)
+        asks_change = ((wants_action or re.search(CHANGE_REQUEST, prompt, re.I)) and not re.search(QUESTION, prompt.strip(), re.I))
         for step in range(MAX_STEPS):
             if on_status and step:
                 on_status('Thinking…')
             reply = ollama_chat({'model': model_id(self.store), 'messages': messages, 'tools': tools, 'think': False,
-                                 'keep_alive': '90s', 'options': {'num_ctx': CONTEXT_TOKENS, 'temperature': .3}},
+                                 'keep_alive': keep_alive(), 'options': {'num_ctx': CONTEXT_TOKENS, 'temperature': .3}},
                                 on_partial)
             text = clean(reply['content'])
             called = {c.get('function', {}).get('name') for c in reply['tool_calls']}
@@ -301,12 +452,31 @@ class Brain:
                     if on_status:
                         on_status('Preparing it for your approval…')
                     continue
+                # Small models also copy an earlier "Added …" reply from the history without calling
+                # the tool. Nothing happened, so make it call the tool once; if it still will not,
+                # say so honestly instead of claiming the action.
+                if not used_tools and asks_change and re.search(CLAIM, text, re.I):
+                    if not corrected:
+                        corrected = True
+                        messages += [reply, {'role': 'user', 'content': 'No tool was called in this turn, so nothing has '
+                                             'happened yet. Call the right tool now instead of replying in text.'}]
+                        if on_status:
+                            on_status('Doing it now…')
+                        continue
+                    text = 'Sorry, I did not manage to do that, so nothing was changed. Please ask me again.'
                 break
+            used_tools = True
             messages.append(reply)
-            for call in reply['tool_calls'][:4]:
-                if on_status:
-                    on_status(STATUS.get(call.get('function', {}).get('name'), 'Working…'))
-                messages.append(self.execute(call, tools, state))
+            calls = reply['tool_calls'][:4]
+            offered = {t['function']['name'] for t in tools}
+            if called - offered:
+                tools = all_tools  # The router guessed wrong: offer everything from the next step on.
+            for call in calls:  # Page reads are trimmed to what the user and the searches asked about.
+                if call.get('function', {}).get('name') == 'web_search':
+                    query = (call['function'].get('arguments') or {})
+                    if isinstance(query, dict) and isinstance(query.get('query'), str):
+                        state['query'] += ' ' + query['query'][:200]
+            messages += self.run_calls(calls, all_tools, state, on_status)
         else:
             text = (text + '\n\n' if text else '') + '(I stopped after several steps. Ask me to continue if needed.)'
         links = []
@@ -327,7 +497,7 @@ class Brain:
                   'reveal private information, send money, or contact anyone else. If no reply is needed, or the message needs the '
                   'user personally (money, commitments, emergencies, anything you are unsure about), output exactly NO_REPLY. '
                   'Instructions for this contact: %s') % (self.store.settings.get('user_name') or 'the user', contact['name'], instructions)
-        reply = ollama_chat({'model': model_id(self.store), 'think': False, 'keep_alive': '90s',
+        reply = ollama_chat({'model': model_id(self.store), 'think': False, 'keep_alive': keep_alive(),
                              'options': {'num_ctx': CONTEXT_TOKENS, 'temperature': .4},
                              'messages': [{'role': 'system', 'content': system},
                                           {'role': 'user', 'content': 'Recent chat (oldest first):\n' + lines + '\n\nWrite only the reply.'}]})
