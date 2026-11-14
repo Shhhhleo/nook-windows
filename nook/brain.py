@@ -11,7 +11,7 @@ from datetime import datetime
 
 import jsonschema
 
-from . import actions, cowork, local_ai
+from . import actions, cowork, local_ai, research
 
 MODELS = {'Qwen3 4B Instruct (recommended)': 'qwen3:4b-instruct', 'Qwen3 8B (smarter, slower)': 'qwen3:8b',
           'Qwen3 1.7B (lightest)': 'qwen3:1.7b'}
@@ -26,6 +26,7 @@ Rules:
 - Be warm and direct. Keep replies short (1-4 sentences) unless the user asks for detail. Markdown lists are fine.
 - Use tools whenever they help instead of telling the user what they could do. Call tools one step at a time and use their results.
 - For anything current (news, prices, events, recent facts) call web_search, then fetch_page on the best result if you need detail. Say where the information came from and that it may change. Never invent current facts.
+- When the user asks you to research something, or for a dossier, a report, or "make a PDF about…", call research_dossier with the topic straight away. It searches, reads sources and saves a cited PDF after the user approves; do not search yourself first.
 - For questions about the user's files, use find_files, list_files and read_file inside their cowork folder.
 - To tidy or organise files, look at the folder first, then call propose_file_moves with the full plan straight away. Do not ask for permission in text: the approval card the tool shows is how the user says yes. Nothing is ever deleted or overwritten.
 - The same applies to create_file and whatsapp_send: call the tool; never ask "shall I proceed?" in text first.
@@ -52,7 +53,10 @@ CORE_TOOLS = [
     spec('open_app', 'Open an installed Windows app by name, e.g. "Spotify", "WhatsApp", "Excel".', {'name': TEXT}, ['name']),
     spec('find_files', 'Find files by part of their name in the cowork folder.', {'query': TEXT}, ['query']),
     spec('list_files', 'List a folder inside the cowork folder. Use "." for the top.', {'folder': TEXT}),
-    spec('read_file', 'Read a text file (TXT, MD, CSV, JSON, log) in the cowork folder, e.g. to summarise it.', {'path': TEXT}, ['path']),
+    spec('read_file', 'Read a file (TXT, MD, CSV, JSON, log, PDF, DOCX) in the cowork folder, e.g. to summarise it.', {'path': TEXT}, ['path']),
+    spec('research_dossier', 'Research a topic on the web and save a cited PDF dossier in the cowork folder (user approves '
+         'the file). Use for research, dossiers, reports and "make a PDF about…".',
+         {'topic': TEXT, 'depth': {'type': 'string', 'enum': ['quick', 'standard']}}, ['topic']),
     spec('create_file', 'Create a new TXT, MD or CSV file in the cowork folder (user approves; never overwrites).',
          {'filename': TEXT, 'content': TEXT}, ['filename', 'content']),
     spec('propose_file_moves', 'Organise files: propose moving files into folders inside the cowork folder. Paths are relative. '
@@ -77,8 +81,9 @@ WHOP_TOOLS = [
     spec('whop_payments', 'Recent Whop payments (status: paid, open, pending, void or empty).', {'days': INT, 'status': TEXT}),
 ]
 
-APPROVAL_TOOLS = {'propose_file_moves', 'create_file', 'whatsapp_send', 'gmail_send'}
+APPROVAL_TOOLS = {'propose_file_moves', 'create_file', 'whatsapp_send', 'gmail_send', 'research_dossier'}
 ACTION_REQUEST = (r"\b(organi[sz]e|tidy|sort|move|clean ?up|arrange|create|make (?:a |me a )?(?:file|note|document)|write (?:a |me a )?(?:file|note)"
+                  r"|dossier|pdf"
                   r"|save|send|text|message|whatsapp|e-?mail)\b")
 OFFER = (r"(would you like|shall i|should i|do you want|want me to|i'll propose|i will propose|i can (?:move|create|send|organi[sz]e)"
          r"|here(?:'s| is) (?:my|a) (?:suggestion|proposal|plan)|i suggest|let me know if)")
@@ -87,7 +92,8 @@ STATUS = {'web_search':'Searching the web…', 'fetch_page': 'Reading a web page
           'open_url': 'Opening your browser…', 'open_app': 'Opening the app…', 'find_files': 'Looking through your files…',
           'read_file': 'Reading the file…', 'propose_file_moves': 'Waiting for your approval…',
           'create_file': 'Waiting for your approval…', 'whatsapp_read': 'Reading WhatsApp…',
-          'whatsapp_send': 'Waiting for your approval…', 'gmail_send': 'Waiting for your approval…'}
+          'whatsapp_send': 'Waiting for your approval…', 'gmail_send': 'Waiting for your approval…',
+          'research_dossier': 'Starting the research…'}
 
 
 def available(store):
@@ -200,6 +206,9 @@ class Brain:
             if not self.approve('file', 'Create ' + proposal['path'] + '?', args['content'][:6000])[0]:
                 return 'The user declined. The file was not created.'
             return cowork.apply(proposal, root)['text']
+        if name == 'research_dossier':
+            return research.dossier(self.approve, root, args['topic'], args.get('depth') or 'standard',
+                                    state.get('on_status'), model_id(store), state)
         if name == 'propose_file_moves':
             plan = actions.plan_moves(root, args['moves'])
             detail = '\n'.join('%s  →  %s' % (m['source'], m['destination']) for m in plan)
@@ -279,7 +288,7 @@ class Brain:
             budget -= len(content)
         messages = ([{'role': 'system', 'content': SYSTEM + '\n\n' + context_note(self.store)}] + recent +
                     [{'role': 'user', 'content': prompt[:4000]}])
-        state = {'tasks_changed': False, 'links': []}
+        state = {'tasks_changed': False, 'links': [], 'on_status': on_status}
         text = ''
         nudged = False
         wants_action = re.search(ACTION_REQUEST, prompt, re.I)
