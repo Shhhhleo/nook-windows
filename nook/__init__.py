@@ -1,1 +1,1 @@
-"""Nook for Windows."""
+"""Notch for Windows."""

@@ -34,7 +34,7 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual(len(found['files']), 1)
             self.assertNotIn('private contents', json.dumps(found))
             self.assertEqual(assistant.respond('what is 20 * 5?', [], settings)['text'], '20 * 5 = 100')
-            with patch.object(assistant, 'models', return_value=['qwen3:0.6b']), patch.object(assistant, 'ollama_request', return_value={'message': {'content': '{"action":"answer","argument":"Hello"}'}}):
+            with patch.object(assistant, 'models', return_value=['qwen3:1.7b']), patch.object(assistant, 'ollama_request', return_value={'message': {'content': 'Hello'}}):
                 self.assertEqual(assistant.respond('hello', [], settings)['text'], 'Hello')
 
     def test_model_web_lookup_requires_visible_action(self):
@@ -46,7 +46,7 @@ class AssistantTests(unittest.TestCase):
             answer = assistant.respond('research solar energy', [], settings)
             self.assertEqual(answer['confirm_web'], 'solar energy')
             lookup.assert_not_called()
-            self.assertEqual(api.call_args.args[1]['keep_alive'], 0)
+            self.assertEqual(api.call_args.args[1]['keep_alive'], '90s')
 
     def test_templates_exclude_accounts_and_reject_extreme_sizes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,6 +60,15 @@ class AssistantTests(unittest.TestCase):
 
 
 class DesktopTests(unittest.TestCase):
+    def setUp(self):
+        for name in ('refresh_media', 'refresh_widgets', 'refresh_tasks'):
+            patcher = patch.object(Notch, name)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(assistant, 'prepare_model', return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_tiles_tasks_drag_and_settings_rebuild(self):
         app = QApplication.instance() or QApplication([])
         store = Store()
@@ -90,7 +99,7 @@ class DesktopTests(unittest.TestCase):
         self.assertIs(notch.assistant_panel, panel)
         self.assertEqual(panel.input.text(), 'Unsent message')
         self.assertEqual(notch.width(), notch.target_geometry().width())
-        self.assertEqual(notch.height(), PRESETS['Focus']['music_height'])
+        self.assertEqual(notch.height(), PRESETS['Focus']['compact_height'])
         for identity in list(notch.desktop.windows):
             notch.desktop.remove(identity)
         self.assertFalse(notch.desktop.timer.isActive())

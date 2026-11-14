@@ -29,13 +29,22 @@ class ClockFace(QWidget):
             if bold and index % 5:
                 continue
             painter.save()
+            angle = math.radians(index*6)
+            if digital:
+                radius = 88/(abs(math.sin(angle))**4+abs(math.cos(angle))**4)**.25
+            else:
+                radius = 89
             painter.rotate(index*6)
             painter.setPen(QPen(QColor('#8a8b8c'), 5 if bold else 2, Qt.SolidLine, Qt.RoundCap))
-            painter.drawLine(QPointF(0, -89), QPointF(0, -76 if index % 5 == 0 else -83))
+            painter.drawLine(QPointF(0, -radius), QPointF(0, -radius+(9 if index % 5 == 0 else 5)))
             painter.restore()
         painter.setPen(ink)
         if digital:
-            painter.setFont(QFont('Bahnschrift Condensed', 44, QFont.Bold))
+            font = QFont('Bahnschrift Condensed', 58, QFont.Black)
+            painter.setFont(font)
+            while painter.fontMetrics().horizontalAdvance(moment.strftime('%I:%M').lstrip('0')) > 168:
+                font.setPointSize(font.pointSize()-1)
+                painter.setFont(font)
             painter.drawText(QRectF(-90, -60, 180, 120), Qt.AlignCenter, moment.strftime('%I:%M').lstrip('0'))
         else:
             if not bold:

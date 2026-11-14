@@ -3,10 +3,10 @@ import html
 import math
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer, QRectF, QPoint, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QTimer, QRectF, QPoint, QPropertyAnimation, QEasingCurve, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QPainterPath, QLinearGradient, QRadialGradient, QShortcut, QKeySequence
 from PySide6.QtWidgets import (QWidget, QPushButton, QLabel, QLineEdit, QVBoxLayout,
-    QHBoxLayout, QFrame, QTextBrowser, QListWidget)
+    QHBoxLayout, QFrame, QTextBrowser, QListWidget, QApplication, QComboBox, QMessageBox)
 from . import local_ai
 
 
@@ -62,7 +62,12 @@ class CloudFace(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.scale(self.width()/100, self.height()/78)
-        painter.translate(0, math.sin(self.phase)*(0.5 if self.sleeping else 1.7))
+        music = not self.sleeping and self.owner.media_state.get('playing', False)
+        painter.translate(0, math.sin(self.phase * (2.5 if music else 1))*(0.5 if self.sleeping else 3 if music else 1.7))
+        if music:
+            painter.translate(50, 40)
+            painter.rotate(math.sin(self.phase*2.5)*5)
+            painter.translate(-50, -40)
         painter.setPen(Qt.NoPen)
         gradient = QLinearGradient(0, 12, 0, 72)
         gradient.setColorAt(0, QColor('#ffffff'))
@@ -108,6 +113,16 @@ class FullscreenChat(QWidget):
         title = QLabel('Snippy')
         title.setStyleSheet('font-size: 18px; font-weight: 600;')
         navigation.addWidget(title)
+        self.library = QComboBox()
+        self.library.setAccessibleName('Saved conversations')
+        self.library.setMinimumWidth(200)
+        self.library.setMaximumWidth(320)
+        self.library.setStyleSheet('QComboBox { background: #eff6ff; color: #172738; padding: 7px; border: 0; border-radius: 10px; } QComboBox QAbstractItemView { background: white; color: #172738; selection-background-color: #cee4fc; }')
+        self.library.activated.connect(self.select_chat)
+        navigation.addWidget(self.library)
+        delete = QPushButton('Delete chat')
+        delete.clicked.connect(self.delete_chat)
+        navigation.addWidget(delete)
         navigation.addStretch()
         self.inbox_button = QPushButton('Notifications')
         self.inbox_button.clicked.connect(self.toggle_inbox)
@@ -161,6 +176,10 @@ class FullscreenChat(QWidget):
         self.web = QPushButton('Look up this topic')
         self.web.clicked.connect(self.owner.assistant_panel.web_action)
         content.addWidget(self.web)
+        self.apply_button = QPushButton('Create this file')
+        self.apply_button.clicked.connect(self.owner.assistant_panel.apply_proposal)
+        self.apply_button.hide()
+        content.addWidget(self.apply_button)
         row = QVBoxLayout()
         row.setContentsMargins(12, 8, 12, 8)
         row.setSpacing(0)
@@ -225,6 +244,7 @@ class FullscreenChat(QWidget):
             painter.restore()
 
     def prepare(self):
+        self.refresh_library()
         known = bool(self.owner.store.settings.get('user_name'))
         self.name_input.setVisible(not known)
         self.continue_button.setVisible(not known)
@@ -243,6 +263,36 @@ class FullscreenChat(QWidget):
             self.heading.setText('What should I call you?')
         self.refresh_transcript()
 
+    def refresh_library(self):
+        engine = self.owner.assistant_panel
+        self.library.blockSignals(True)
+        self.library.clear()
+        self.library.addItem('Chat library', None)
+        for row in engine.archive.chats:
+            self.library.addItem(row['title'], row['id'])
+        self.library.setCurrentIndex(max(0, self.library.findData(engine.chat_id)))
+        self.library.blockSignals(False)
+
+    def select_chat(self, index):
+        if self.snippy.busy:
+            self.refresh_library()
+            return
+        identity = self.library.itemData(index)
+        if identity:
+            self.owner.assistant_panel.load_chat(identity)
+            self.error = ''
+            self.results.clear()
+            self.apply_button.hide()
+            self.prepare()
+
+    def delete_chat(self):
+        engine = self.owner.assistant_panel
+        if engine.busy or not engine.chat_id:
+            return
+        if QMessageBox.question(self, 'Delete conversation', 'Delete this saved conversation from this PC?') == QMessageBox.Yes:
+            engine.archive.delete(engine.chat_id)
+            self.clear()
+
     def save_name(self):
         name = self.name_input.text().strip()
         if not name:
@@ -252,6 +302,7 @@ class FullscreenChat(QWidget):
         self.owner.store.save()
         self.prepare()
         self.input.setFocus()
+        self.snippy.prepare_model()
 
     def toggle_inbox(self):
         self.inbox.setVisible(not self.inbox.isVisible())
@@ -305,6 +356,10 @@ class Snippy(QWidget):
         self.busy = False
         self.sleeping = False
         self.step = 0
+        self.model_prepared = False
+        self.drag_start = None
+        self.drag_offset = None
+        self.dragged = False
         self.alerts = []
         self.pending_alerts = []
         self.showing_notifications = False
@@ -317,6 +372,8 @@ class Snippy(QWidget):
         root.setSpacing(5)
         self.face = CloudFace(owner)
         self.face.clicked.connect(self.toggle_input)
+        self.face.installEventFilter(self)
+        self.face.setToolTip('Click to type · drag to any display')
         root.addWidget(self.face, 0, Qt.AlignHCenter)
         self.input = QLineEdit()
         self.input.setMaxLength(4000)
@@ -325,7 +382,12 @@ class Snippy(QWidget):
         self.input.setStyleSheet('color: #243b58; background: white; border: 1px solid #e2e6ee; border-radius: 10px; padding: 5px 9px; font-size: 11px;')
         self.input.setFixedHeight(29)
         self.input.returnPressed.connect(lambda: self.submit(self.input.text()))
-        root.addWidget(self.input)
+        self.composer = QWidget()
+        row = QHBoxLayout(self.composer)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        row.addWidget(self.input, 1)
+        root.addWidget(self.composer)
         self.bubble = QFrame()
         self.bubble.setStyleSheet('QFrame { background: white; border-radius: 12px; } QLabel { color: #243b58; font-size: 12px; background: transparent; } QPushButton { color: #385473; background: #edf2f8; border: 0; padding: 5px; }')
         bubble = QVBoxLayout(self.bubble)
@@ -336,14 +398,23 @@ class Snippy(QWidget):
         self.details = QPushButton('Open conversation')
         self.details.clicked.connect(self.open_details)
         bubble.addWidget(self.details)
+        self.details.hide()
         root.addWidget(self.bubble)
-        self.expand_button = QPushButton('Open chat')
+        self.apply_button = QPushButton('Review file')
+        self.apply_button.clicked.connect(self.review_proposal)
+        bubble.addWidget(self.apply_button)
+        self.apply_button.hide()
+        self.expand_button = QPushButton('↗')
+        self.expand_button.setAccessibleName('Expand Snippy')
+        self.expand_button.setToolTip('Open full conversation')
+        self.expand_button.setFixedSize(28, 29)
         self.expand_button.setStyleSheet('color: #344d70; background: white; border: 0; border-radius: 8px; padding: 3px; font-size: 10px;')
         self.expand_button.clicked.connect(self.open_fullscreen)
-        root.addWidget(self.expand_button)
+        row.addWidget(self.expand_button)
         self.input.hide()
         self.bubble.hide()
         self.expand_button.hide()
+        self.composer.hide()
         self.workspace = FullscreenChat(self)
         self.motion = QPropertyAnimation(self, b'pos', self)
         self.motion.setDuration(1600)
@@ -360,11 +431,81 @@ class Snippy(QWidget):
         engine.submitted.connect(self.sent)
         engine.response_ready.connect(self.receive)
         engine.voice_ready.connect(self.voice_text)
+        engine.partial.connect(self.streaming)
         self.input.textEdited.connect(self.wake)
         self.workspace.input.textEdited.connect(self.wake)
         self.workspace.name_input.textEdited.connect(self.wake)
         self.idle_timer.start()
         self.refresh_size()
+        from .voice import PushToTalk
+        self.voice = PushToTalk(self)
+        self.voice.text_ready.connect(self.send_voice)
+        self.voice.review.connect(self.review_voice)
+        self.reply_dismissed = False
+        self.voice.status.connect(self.voice_status)
+        self.voice.configure(owner.store.settings.get('voice_hotkey', False))
+
+    def review_proposal(self):
+        proposal = self.owner.assistant_panel.pending_proposal
+        mcp = self.owner.assistant_panel.pending_mcp
+        if mcp:
+            import json
+            text = 'Run this app action?\n\n' + json.dumps(mcp, indent=2)[:6000]
+        elif proposal:
+            text = 'Create this new file?\n' + proposal['path'] + '\n\n' + proposal['content'][:5000]
+        else:
+            return
+        if QMessageBox.question(self, 'Review action', text) == QMessageBox.Yes:
+            self.owner.assistant_panel.apply_proposal()
+
+    def voice_status(self, text):
+        self.wake()
+        self.reply.setText(text)
+        self.bubble.show()
+        self.show_input(True)
+        self.refresh_size()
+
+    def review_voice(self, text):
+        self.wake()
+        self.show_input(True)
+        self.input.setText(text)
+        self.input.setFocus()
+        self.refresh_size()
+
+    def send_voice(self, text):
+        if text and not self.busy:
+            self.owner.assistant_panel.voice_reply = True
+            self.submit(text)
+
+    def show_input(self, visible):
+        self.composer.setVisible(visible)
+        self.input.setVisible(visible)
+        self.expand_button.setVisible(visible)
+
+    def eventFilter(self, watched, event):
+        if watched is self.face:
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self.motion.stop()
+                self.drag_start = event.globalPosition().toPoint()
+                self.drag_offset = self.drag_start - self.pos()
+                self.dragged = False
+            elif event.type() == QEvent.MouseMove and self.drag_start is not None:
+                point = event.globalPosition().toPoint()
+                if (point-self.drag_start).manhattanLength() >= QApplication.startDragDistance():
+                    self.dragged = True
+                if self.dragged:
+                    self.move(point-self.drag_offset)
+                    return True
+            elif event.type() == QEvent.MouseButtonRelease and self.drag_start is not None:
+                self.drag_start = None
+                if self.dragged:
+                    self.face.setDown(False)
+                    self.owner.store.settings['snippy_position'] = [self.x(), self.y()]
+                    self.owner.store.save()
+                    self.follow(force=True)
+                    self.wake()
+                    return True
+        return super().eventFilter(watched, event)
 
     def refresh_size(self):
         expanded = any(not widget.isHidden() for widget in (self.input, self.bubble, self.expand_button))
@@ -373,8 +514,11 @@ class Snippy(QWidget):
         self.adjustSize()
 
     def onboard(self):
-        if not self.owner.store.settings.get('user_name'):
-            self.open_fullscreen()
+        from .onboarding import Onboarding
+        if not hasattr(self, 'setup') or not self.setup.isVisible():
+            self.setup = Onboarding(self.owner)
+        self.setup.show()
+        self.setup.raise_()
 
     def wake(self):
         self.sleeping = False
@@ -383,18 +527,21 @@ class Snippy(QWidget):
         self.idle_timer.start()
 
     def sync_preferences(self):
+        self.model_prepared = False
         self.face.set_sleeping(self.sleeping)
         self.workspace.face.set_sleeping(self.sleeping)
+        self.voice.configure(self.owner.store.settings.get('voice_hotkey', False))
         if not self.owner.store.settings['animation']:
             self.roam_timer.stop()
             self.motion.stop()
 
     def sleep(self):
-        if self.busy:
+        if self.busy or self.voice.running:
             self.idle_timer.start()
             return
         self.sleeping = True
-        self.input.hide()
+        self.model_prepared = False
+        self.show_input(False)
         self.bubble.hide()
         self.expand_button.hide()
         self.face.set_sleeping(True)
@@ -403,21 +550,44 @@ class Snippy(QWidget):
         self.motion.stop()
         self.refresh_size()
         self.follow()
+        from . import speech
+        speech.unload()
         self.owner.run_job('snippy-sleep', local_ai.stop, lambda _: None)
 
     def toggle_input(self):
         if not self.owner.store.settings.get('user_name'):
             self.onboard()
             return
-        visible = self.input.isVisible()
+        dismiss = not self.bubble.isHidden()
+        self.reply_dismissed = True
+        self.bubble.hide()
+        self.showing_notifications = False
+        visible = self.input.isVisible() and not dismiss
         self.wake()
-        self.input.setVisible(not visible)
-        self.expand_button.setVisible(not visible)
+        self.show_input(not visible)
         self.refresh_size()
         self.follow()
         if not visible:
             self.activateWindow()
             self.input.setFocus()
+            self.prepare_model()
+
+    def prepare_model(self):
+        if self.model_prepared or 'snippy-prepare' in self.owner.jobs:
+            return
+        from . import assistant
+        self.model_prepared = True
+        if not self.busy:
+            self.workspace.status.setText('Preparing local AI…')
+        settings = dict(self.owner.store.settings)
+        def ready(_):
+            if not self.busy and not self.sleeping:
+                self.workspace.status.setText('Local AI ready')
+        def failed(_):
+            self.model_prepared = False
+            if not self.busy:
+                self.workspace.status.setText('Local AI will retry when you send a message.')
+        self.owner.run_job('snippy-prepare', lambda: assistant.prepare_model(settings), ready, failed)
 
     def submit(self, text):
         text = text.strip()
@@ -435,15 +605,18 @@ class Snippy(QWidget):
         self.workspace.voice.setEnabled(not busy)
         self.workspace.status.setText('Snippy is working…' if busy else '')
         if busy:
+            self.reply_dismissed = False
             self.idle_timer.stop()
             self.bubble.hide()
-            self.input.hide()
-            self.expand_button.hide()
+            self.show_input(True)
+            self.input.setEnabled(False)
+            self.input.clearFocus()
             self.refresh_size()
             if self.owner.store.settings['animation'] and not self.workspace.isVisible():
                 self.roam_timer.start()
                 self.roam()
         else:
+            self.input.setEnabled(True)
             self.roam_timer.stop()
             self.motion.stop()
             self.idle_timer.start()
@@ -452,17 +625,33 @@ class Snippy(QWidget):
                 QTimer.singleShot(250, self.show_pending_alerts)
 
     def sent(self, text):
+        self.reply_dismissed = False
         self.workspace.results.clear()
         self.workspace.web.hide()
         self.workspace.transcript.show()
         self.workspace.transcript.append('<p><b>You</b><br>' + html.escape(text) + '</p>')
 
+    def streaming(self, text):
+        if not self.busy or self.reply_dismissed:
+            return
+        self.reply.setText(text[-320:])
+        self.bubble.show()
+        self.apply_button.hide()
+        self.refresh_size()
+        self.workspace.status.setText('Replying… ' + text[-120:])
+
     def receive(self, result):
         self.showing_notifications = False
         self.details.setText('Open conversation')
+        self.details.hide()
         self.reply.setText(result['text'][:320] + ('…' if len(result['text']) > 320 else ''))
-        self.bubble.show()
-        self.expand_button.hide()
+        self.bubble.setVisible(not self.reply_dismissed)
+        self.show_input(True)
+        proposed = bool(result.get('proposal') or result.get('mcp_proposal'))
+        self.apply_button.setText('Review app action' if result.get('mcp_proposal') else 'Review file')
+        self.apply_button.setVisible(proposed)
+        self.workspace.apply_button.setVisible(proposed)
+        self.workspace.apply_button.setText(self.owner.assistant_panel.apply_button.text())
         self.refresh_size()
         self.follow()
         self.workspace.error = result['text'] if result.get('error') else ''
@@ -474,9 +663,7 @@ class Snippy(QWidget):
         self.workspace.results.setVisible(source.count() > 0)
         self.workspace.web.setVisible(bool(result.get('confirm_web') or result.get('web_query')))
         self.workspace.web.setText(self.owner.assistant_panel.web_button.text())
-        turns = len(self.owner.assistant_panel.history) // 2
-        if not self.workspace.isVisible() and (len(result['text']) > 500 or turns >= 4):
-            self.open_fullscreen()
+        self.workspace.refresh_library()
 
     def voice_text(self, text):
         if not self.busy and text:
@@ -529,6 +716,7 @@ class Snippy(QWidget):
         self.reply.setText(message[:420])
         self.showing_notifications = True
         self.details.setText('View notifications')
+        self.details.show()
         self.bubble.show()
         self.expand_button.hide()
         self.refresh_size()
@@ -540,23 +728,37 @@ class Snippy(QWidget):
         self.motion.stop()
         self.roam_timer.stop()
         self.workspace.prepare()
+        self.workspace.setScreen(self.screen())
         self.hide()
         self.workspace.showFullScreen()
         self.workspace.activateWindow()
         if self.owner.store.settings.get('user_name'):
             self.workspace.input.setFocus()
+            self.prepare_model()
         else:
             self.workspace.name_input.setFocus()
 
-    def follow(self):
-        if self.busy:
+    def follow(self, force=False):
+        if (self.busy and not force) or self.drag_start is not None:
             return
-        bounds = self.owner.screen().availableGeometry()
-        x = self.owner.geometry().right()+6-(self.width()-self.face.width())//2
-        self.move(max(bounds.left(), min(x, bounds.right()-self.width()+1)), bounds.top()+18)
+        saved = self.owner.store.settings.get('snippy_position')
+        if saved:
+            point = QPoint(*saved)
+            screen = QApplication.screenAt(point) or self.owner.screen()
+            x, y = saved
+        else:
+            screen = self.owner.screen()
+            x = self.owner.geometry().right()+6-(self.width()-self.face.width())//2
+            y = screen.availableGeometry().top()+18
+        bounds = screen.availableGeometry()
+        self.move(max(bounds.left(), min(x, bounds.right()-self.width()+1)),
+                  max(bounds.top(), min(y, bounds.bottom()-self.height()+1)))
 
     def roam(self):
-        bounds = self.owner.screen().availableGeometry()
+        if self.drag_start is not None or self.input.hasFocus():
+            return
+        screens = QApplication.screens()
+        bounds = screens[self.step % len(screens)].availableGeometry()
         self.step += 1
         fraction = (.68, .36, .78, .52)[self.step % 4]
         target = QPoint(bounds.x()+int((bounds.width()-self.width())*fraction),
@@ -567,6 +769,7 @@ class Snippy(QWidget):
         self.motion.start()
 
     def closeEvent(self, event):
+        self.voice.close()
         self.workspace.hide()
         self.idle_timer.stop()
         self.roam_timer.stop()

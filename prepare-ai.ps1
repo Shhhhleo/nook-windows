@@ -13,5 +13,5 @@ if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) {
 Expand-Archive -LiteralPath $archive -DestinationPath vendor/ollama -Force
 curl.exe -L --fail -o vendor/ollama/LICENSE 'https://raw.githubusercontent.com/ollama/ollama/v0.40.16/LICENSE'
 if ($LASTEXITCODE -ne 0) { throw 'License download failed' }
-.venv/Scripts/python.exe -c "from nook import assistant,local_ai; print(assistant.ollama_request('/api/pull', {'model':'qwen3:0.6b','stream':False},timeout=1800)); local_ai.stop()"
+.venv/Scripts/python.exe -c "from nook import assistant,local_ai; print(assistant.ollama_request('/api/pull', {'model':local_ai.MODEL,'stream':False},timeout=1800)); local_ai.stop()"
 if ($LASTEXITCODE -ne 0) { throw 'Starter model preparation failed' }

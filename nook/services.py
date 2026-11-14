@@ -44,7 +44,7 @@ class Job(QRunnable):
 
 def request(url, data=None, headers=None, form=False):
     headers = dict(headers or {})
-    headers['User-Agent'] = 'Nook-Windows/0.1'
+    headers['User-Agent'] = 'Notch-Windows/0.1'
     body = None
     if data is not None:
         body = urllib.parse.urlencode(data).encode() if form else json.dumps(data).encode()
@@ -118,20 +118,47 @@ def media(action=None, preferred=''):
     return asyncio.run(bounded())
 
 
-def weather(city, fahrenheit):
+def weather(city, fahrenheit, windows_location=False, structured=False):
+    if windows_location:
+        async def locate():
+            from winrt.windows.devices.geolocation import Geolocator, PositionAccuracy
+            locator = Geolocator()
+            locator.desired_accuracy = PositionAccuracy.DEFAULT
+            point = (await locator.get_geoposition_async()).coordinate.point.position
+            return {'name': 'Windows location', 'latitude': round(point.latitude, 2), 'longitude': round(point.longitude, 2)}
+        try:
+            place = asyncio.run(asyncio.wait_for(locate(), timeout=15))
+        except Exception:
+            raise ValueError('Windows location is unavailable. Enable Location for desktop apps in Windows Settings, or choose City in Notch.')
+    else:
+        place = weather_city(city)
+    return weather_at(place, fahrenheit, structured)
+
+
+def weather_city(city):
     query = urllib.parse.urlencode({'name': city, 'count': 1, 'language': 'en', 'format': 'json'})
     places = request('https://geocoding-api.open-meteo.com/v1/search?' + query).get('results', [])
     if not places:
         raise ValueError('City not found. Add a nearby city in Settings.')
-    place = places[0]
+    return places[0]
+
+
+def format_weather(data):
+    return '%s  %s%s\n%s · Feels like %s%s\nOpen-Meteo · %s' % (data['name'], data['temperature'], data['unit'], data['condition'], data['feels'], data['unit'], data['asof'])
+
+
+def weather_at(place, fahrenheit, structured=False):
     query = urllib.parse.urlencode(dict(latitude=place['latitude'], longitude=place['longitude'],
-                current='temperature_2m,apparent_temperature,weather_code',
+                current='temperature_2m,apparent_temperature,weather_code', daily='temperature_2m_max,temperature_2m_min', forecast_days=1,
                 temperature_unit='fahrenheit' if fahrenheit else 'celsius', timezone='auto'))
-    result = request('https://api.open-meteo.com/v1/forecast?' + query)['current']
+    forecast = request('https://api.open-meteo.com/v1/forecast?' + query)
+    result, daily = forecast['current'], forecast.get('daily', {})
     code = result['weather_code']
-    condition = 'Clear' if code == 0 else 'Cloudy' if code < 4 else 'Fog' if code < 50 else 'Rain' if code < 70 else 'Snow' if code < 80 else 'Showers' if code < 95 else 'Thunderstorm'
-    unit = '°F' if fahrenheit else '°C'
-    return '%s  %s%s\n%s · Feels like %s%s\nOpen-Meteo · %s' % (place['name'], result['temperature_2m'], unit, condition, result['apparent_temperature'], unit, result['time'].replace('T', ' '))
+    condition = 'Clear' if code == 0 else 'Partly cloudy' if code < 3 else 'Cloudy' if code == 3 else 'Fog' if code < 50 else 'Rain' if code < 70 else 'Snow' if code < 80 else 'Showers' if code < 95 else 'Thunderstorm'
+    data = dict(name=place['name'], temperature=result['temperature_2m'], feels=result['apparent_temperature'], condition=condition,
+                code=code, unit='°F' if fahrenheit else '°C', high=daily.get('temperature_2m_max',[None])[0],
+                low=daily.get('temperature_2m_min',[None])[0], asof=result['time'].replace('T',' '))
+    return data if structured else format_weather(data)
 
 
 def notion(token):
@@ -202,7 +229,7 @@ def google_connect(store):
             result.update(query)
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b'You may return to Nook.')
+            self.wfile.write(b'You may return to Notch.')
 
         def log_message(self, *_):
             pass

@@ -1,12 +1,12 @@
 {
   "format": "nook-appearance-v1",
   "settings": {
-    "width": 640,
-    "music_height": 150,
-    "compact_width": 420,
-    "compact_height": 58,
-    "height": 390,
-    "radius": 24,
+    "width": 840,
+    "music_height": 132,
+    "compact_width": 700,
+    "compact_height": 42,
+    "height": 300,
+    "radius": 20,
     "opacity": 100,
     "desktop_theme": "Glass"
   }

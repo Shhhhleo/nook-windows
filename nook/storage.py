@@ -7,18 +7,20 @@ from pathlib import Path
 
 DATA = Path(os.environ.get('NOOK_DATA_DIR', str(Path(os.environ['LOCALAPPDATA']) / 'Nook')))
 DATA.mkdir(parents=True, exist_ok=True)
-WIDGETS = ['Music', 'Time', 'To do', 'Weather', 'Google Calendar', 'Notion', 'Stocks',
+WIDGETS = ['Music', 'Time', 'To do', 'Weather', 'Google Calendar', 'Stocks',
            'Claude usage', 'Codex usage', 'Running tasks', 'Calls', 'Academia']
-DEFAULTS = dict(enabled=['Music', 'Time', 'To do'], order=WIDGETS, width=640,
-                compact_width=420, compact_height=58, music_height=150,
-                height=390, radius=24, opacity=100, screen=0,
-                accent='#b7b0ff', font='Segoe UI', clock_style='Minimal', weather_style='Detailed',
-                hour24=False, seconds=False, animation=True, collapse_ms=90, ui_revision=5,
+DEFAULTS = dict(enabled=['Music', 'Time', 'To do'], order=WIDGETS, width=840,
+                compact_width=700, compact_height=42, music_height=132,
+                height=300, radius=20, opacity=100, screen=0,
+                accent='#b7b0ff', font='Segoe UI Semibold', clock_style='Minimal', weather_style='Detailed',
+                hour24=False, seconds=False, animation=True, collapse_ms=90, ui_revision=6,
                 city='', fahrenheit=False, symbols='AAPL, MSFT', search_root=str(Path.home()),
                 google_client_id='', google_client_secret='', todos=[], deadlines=[],
                 desktop_theme='Glass', desktop_widgets=[], desktop_locked=False,
                 ollama_model='', speak_replies=False, user_name='', greeting_index=0,
-                notifications_enabled=False, notifications_preview=False, notifications_apps='')
+                notifications_enabled=False, notifications_preview=False, notifications_apps='',
+                onboarding_complete=False, voice_hotkey=False, snippy_position=None,
+                weather_source='City', mcp_connections=[], live_news=True, speech_language='English (US)', microphone=-1)
 
 
 class Blob(ctypes.Structure):
@@ -66,10 +68,25 @@ class Store:
                     if self.settings.get(key) == old:
                         self.settings[key] = new
                 self.settings['ui_revision'] = 5
+            if self.settings.get('ui_revision', 1) < 6:
+                replacements = {'width': {640: 840, 600: 760, 720: 960},
+                                'compact_width': {420: 700, 360: 620, 440: 800},
+                                'compact_height': {58: 42, 52: 40, 62: 44},
+                                'music_height': {150: 132, 144: 132, 164: 140},
+                                'height': {390: 300, 360: 300, 430: 340},
+                                'radius': {24: 20, 22: 18, 28: 22}}
+                for key, mapping in replacements.items():
+                    self.settings[key] = mapping.get(self.settings[key], self.settings[key])
+                self.settings['ui_revision'] = 6
         except FileNotFoundError:
             pass
         except (ValueError, OSError):
             self.warning = 'Settings could not be read. Defaults loaded.'
+        # Notion is now an optional MCP app, not a built-in account/widget.
+        for key in ('enabled', 'order'):
+            self.settings[key] = [name for name in self.settings[key] if name in WIDGETS]
+        if self.settings.get('ollama_model') == 'qwen3:0.6b':
+            self.settings['ollama_model'] = ''  # Use the upgraded bundled default.
         self.secrets = {}
         try:
             self.secrets = json.loads(protect((DATA / 'accounts.bin').read_bytes(), True))

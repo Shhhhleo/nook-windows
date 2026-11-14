@@ -10,4 +10,4 @@ if ($developerMode -ne 1) {
     throw 'This unsigned development build requires Windows Developer Mode for app registration. Enable it in Windows Settings > For developers, or use the portable app without notification access.'
 }
 Add-AppxPackage -Register $manifestPath
-Write-Host 'Nook is registered. Quit any running portable copy, open Nook from Start, then choose Settings > Assistant > Connect notifications.'
+Write-Host 'Notch is registered. Quit any running portable copy, open Notch from Start, then choose Settings > Assistant > Connect notifications.'

@@ -3,26 +3,26 @@ import json
 from pathlib import Path
 
 PRESETS = {
-    'Everyday': dict(width=640, music_height=150, compact_width=420, compact_height=58,
-                     height=390, radius=24, opacity=100, desktop_theme='Glass'),
-    'Focus': dict(width=600, music_height=144, compact_width=360, compact_height=52,
-                  height=360, radius=22, opacity=100, desktop_theme='Paper'),
-    'Studio': dict(width=720, music_height=164, compact_width=440, compact_height=62,
-                   height=430, radius=28, opacity=100, desktop_theme='Midnight'),
+    'Everyday': dict(width=840, music_height=132, compact_width=700, compact_height=42,
+                     height=300, radius=20, opacity=100, desktop_theme='Glass'),
+    'Focus': dict(width=760, music_height=132, compact_width=620, compact_height=40,
+                  height=300, radius=18, opacity=100, desktop_theme='Paper'),
+    'Studio': dict(width=960, music_height=140, compact_width=800, compact_height=44,
+                   height=340, radius=22, opacity=100, desktop_theme='Midnight'),
 }
 DESCRIPTIONS = {
     'Everyday': 'A balanced music player and readable resting strip.',
     'Focus': 'Small and quiet, with space left for your work.',
     'Studio': 'More room for track names and desktop essentials.',
 }
-LIMITS = {'width': (460, 1100), 'music_height': (144, 240), 'compact_width': (320, 600),
-          'compact_height': (48, 90), 'height': (300, 850), 'radius': (8, 48), 'opacity': (65, 100)}
-THEMES = ('Glass', 'Paper', 'Midnight')
+LIMITS = {'width': (460, 1100), 'music_height': (128, 240), 'compact_width': (320, 1100),
+          'compact_height': (36, 90), 'height': (300, 850), 'radius': (8, 48), 'opacity': (65, 100)}
+THEMES = ('Glass', 'Paper', 'Midnight', 'Graphite')
 
 
 def validate_template(value):
     if not isinstance(value, dict) or value.get('format') != 'nook-appearance-v1':
-        raise ValueError('Choose a Nook appearance template (.json).')
+        raise ValueError('Choose a Notch appearance template (.json).')
     settings = value.get('settings')
     if not isinstance(settings, dict):
         raise ValueError('This template has no appearance settings.')

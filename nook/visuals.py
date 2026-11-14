@@ -108,8 +108,9 @@ class AlbumArt(QWidget):
 
 
 class WeekStrip(QWidget):
-    def __init__(self):
+    def __init__(self, accent='#64afff'):
         super().__init__()
+        self.accent = accent
         self.setMinimumWidth(150)
         self.setFixedHeight(48)
 
@@ -126,7 +127,7 @@ class WeekStrip(QWidget):
             day = start + timedelta(days=i)
             painter.setPen(QColor('#72727a'))
             painter.drawText(QRectF(i*cell, 0, cell, 14), Qt.AlignCenter, day.strftime('%a')[0])
-            painter.setPen(QColor('#64afff' if day == today else '#c0c0c7'))
+            painter.setPen(QColor(self.accent if day == today else '#c0c0c7'))
             painter.drawText(QRectF(i*cell, 22, cell, 22), Qt.AlignCenter, str(day.day).zfill(2))
 
 

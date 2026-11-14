@@ -98,7 +98,7 @@ class NotificationMonitor(QObject):
             self.report('Allow notification access in the Windows prompt.')
             self.access_timer.start()
         except Exception:
-            self.failed('Windows could not request notification access. The registered Nook app and notification permission are required.')
+            self.failed('Windows could not request notification access. The registered Notch app and notification permission are required.')
 
     def finish_access(self):
         try:

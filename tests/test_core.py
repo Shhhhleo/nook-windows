@@ -3,6 +3,7 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 temporary = tempfile.TemporaryDirectory()
@@ -17,6 +18,12 @@ from nook.ui import Notch, Settings
 
 
 class CoreTests(unittest.TestCase):
+    def setUp(self):
+        for name in ('refresh_media', 'refresh_widgets', 'refresh_tasks'):
+            patcher = patch.object(Notch, name)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication([])
@@ -76,7 +83,7 @@ class CoreTests(unittest.TestCase):
         settings = Settings(notch)
         self.assertEqual(settings.tabs.count(), 6)
         notch.expand(False)
-        self.assertEqual(notch.height(), store.settings['music_height'])
+        self.assertEqual(notch.height(), store.settings['compact_height'])
         store.settings['animation'] = True
         notch.switch_view('Music')
         notch.expand(True)
@@ -93,7 +100,7 @@ class CoreTests(unittest.TestCase):
         notch.expand(False)
         QTest.qWait(180)
         self.assertEqual(notch.geometry(), notch.target_geometry())
-        self.assertFalse(notch.body.isHidden())
+        self.assertTrue(notch.body.isHidden())
         self.assertEqual(notch.view, 'Music')
         notch.cloud.close()
         notch.pool.waitForDone(10000)

@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QThreadPool, QUrl, QSize
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QFont, QPixmap, QIcon, QDesktopServices, QCursor, QShortcut, QKeySequence
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QFrame, QTabWidget, QListWidget, QListWidgetItem, QCheckBox,
+    QLineEdit, QScrollArea, QFrame, QStackedWidget, QListWidget, QListWidgetItem, QCheckBox,
     QSpinBox, QComboBox, QFormLayout, QFileDialog, QColorDialog, QFontComboBox,
     QSystemTrayIcon, QMenu, QMessageBox, QAbstractItemView, QGridLayout, QSlider, QLayout)
 from .visuals import media_icon, AlbumArt, TrackLabel, WeekStrip, TemplatePreview
@@ -25,8 +25,14 @@ from . import assistant
 
 
 STYLE = '''
-QWidget { color: #f4f4f7; font-family: "Segoe UI"; font-size: 13px; }
+QWidget { color: #f4f4f7; font-family: "Segoe UI"; font-size: 13px; font-weight: 500; }
+QWidget#notch QLabel, QWidget#notch QPushButton { font-weight: 600; }
 QWidget#settings { background: #151518; }
+QFrame#settingsGroup { background: #202024; border: 1px solid #303036; border-radius: 14px; }
+QListWidget#settingsNavigation { background: transparent; border: 0; padding: 16px 0; }
+QListWidget#settingsNavigation::item { padding: 12px 14px; margin: 3px 0; border-radius: 9px; }
+QListWidget#settingsNavigation::item:selected { background: #353143; color: #e7e3ff; }
+QListWidget#settingsNavigation::item:hover { background: #29292f; }
 QLabel { background: transparent; }
 QLabel#muted { color: #9999a5; }
 QLabel#title { font-size: 27px; font-weight: 600; }
@@ -99,20 +105,31 @@ class Settings(QWidget):
         super().__init__()
         self.notch = notch
         self.store = notch.store
-        self.setWindowTitle('Nook · Settings')
+        self.setWindowTitle('Notch · Settings')
         self.setObjectName('settings')
-        self.resize(760, 680)
-        self.setMinimumSize(640, 500)
+        self.resize(980, 720)
+        self.setMinimumSize(850, 550)
         root = QVBoxLayout(self)
         root.setContentsMargins(30, 25, 30, 25)
-        head = QHBoxLayout()
-        head.addWidget(label('Make room for your day.', 'title'))
-        head.addStretch()
-        head.addWidget(label('NOOK', 'muted'))
-        root.addLayout(head)
-        root.addWidget(label('Your notch. Your essentials.', 'muted'))
-        self.tabs = QTabWidget()
-        root.addWidget(self.tabs)
+        body = QHBoxLayout()
+        body.setSpacing(28)
+        rail = QVBoxLayout()
+        rail.addWidget(label('Notch', 'title'))
+        rail.addWidget(label('A place for your day', 'muted'))
+        self.navigation = QListWidget()
+        self.navigation.setObjectName('settingsNavigation')
+        self.navigation.setFixedWidth(165)
+        rail.addWidget(self.navigation, 1)
+        body.addLayout(rail)
+        content = QVBoxLayout()
+        self.page_title = label('Widgets', 'title')
+        content.addWidget(self.page_title)
+        content.addWidget(label('Make it feel like yours.', 'muted'))
+        self.tabs = QStackedWidget()
+        content.addWidget(self.tabs, 1)
+        body.addLayout(content, 1)
+        root.addLayout(body, 1)
+        self.navigation.currentRowChanged.connect(self.select_page)
         self.fields = {}
         self.widget_page()
         self.appearance_page()
@@ -120,6 +137,7 @@ class Settings(QWidget):
         self.assistant_page()
         self.connections_page()
         self.general_page()
+        self.navigation.setCurrentRow(0)
         self.status = label('', 'muted', True)
         root.addWidget(self.status)
         footer = QHBoxLayout()
@@ -128,22 +146,39 @@ class Settings(QWidget):
         footer.addWidget(button('Save settings', self.save, primary=True))
         root.addLayout(footer)
 
+    def select_page(self, index):
+        self.tabs.setCurrentIndex(index)
+        item = self.navigation.item(index)
+        if item:
+            self.page_title.setText(item.text())
+
+    def form_card(self, layout, form):
+        card = QFrame()
+        card.setObjectName('settingsGroup')
+        form.setContentsMargins(18, 18, 18, 18)
+        form.setVerticalSpacing(17)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        card.setLayout(form)
+        layout.addWidget(card)
+
     def page(self, title):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         widget = QWidget()
-        widget.setStyleSheet('background: #151518;')
+        widget.setObjectName('settingsPage')
+        widget.setStyleSheet('QWidget#settingsPage { background: #151518; }')
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(4, 20, 12, 20)
         scroll.setWidget(widget)
-        self.tabs.addTab(scroll, title)
+        self.tabs.addWidget(scroll)
+        self.navigation.addItem(title)
         return layout
 
     def widget_page(self):
         layout = self.page('Widgets')
         layout.addWidget(label('Choose what lives in your notch', 'section'))
         layout.addWidget(label('Tick to enable. Drag to reorder.', 'muted'))
-        layout.addWidget(label('With no active or paused song, Nook shows the first two enabled non-music widgets. Reorder them here to choose your idle layout.', 'muted', True))
+        layout.addWidget(label('With no active or paused song, Notch shows the first two enabled non-music widgets. Reorder them here to choose your idle layout.', 'muted', True))
         self.widget_list = QListWidget()
         self.widget_list.setMinimumHeight(405)
         self.widget_list.setDragDropMode(QAbstractItemView.InternalMove)
@@ -166,6 +201,12 @@ class Settings(QWidget):
             control = QSpinBox()
             control.setRange(*limits)
             control.setValue(int(value))
+        elif kind == 'microphone':
+            control = QComboBox()
+            control.addItem('Windows default microphone', -1)
+            if value != -1:
+                control.addItem('Saved microphone · ' + str(value), value)
+                control.setCurrentIndex(1)
         elif kind == 'combo':
             control = QComboBox()
             control.addItems(choices)
@@ -213,9 +254,9 @@ class Settings(QWidget):
         advanced.toggled.connect(details.setVisible)
         form.setVerticalSpacing(16)
         self.field(form, 'width', 'Expanded width', 'spin', limits=(460, 1100))
-        self.field(form, 'compact_width', 'Resting width', 'spin', limits=(320, 600))
-        self.field(form, 'compact_height', 'Resting height', 'spin', limits=(48, 90))
-        self.field(form, 'music_height', 'Music panel height', 'spin', limits=(144, 240))
+        self.field(form, 'compact_width', 'Resting width', 'spin', limits=(320, 1100))
+        self.field(form, 'compact_height', 'Resting height', 'spin', limits=(36, 90))
+        self.field(form, 'music_height', 'Music panel height', 'spin', limits=(128, 240))
         self.field(form, 'height', 'Widgets and assistant height', 'spin', limits=(300, 850))
         self.field(form, 'radius', 'Corner radius', 'spin', limits=(8, 48))
         self.field(form, 'opacity', 'Opacity (%)', 'spin', limits=(65, 100))
@@ -239,11 +280,11 @@ class Settings(QWidget):
                 control.setCurrentText(value)
         if self.save():
             self.notch.switch_view('Music')
-            self.notch.preview()
-            self.status.setText('Template applied. Preview is pinned open; unpin to try the resting size.')
+            self.notch.expand(False)
+            self.status.setText('Template applied. Hover over the notch to expand it.')
 
     def import_template(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Import Nook appearance', '', 'Nook template (*.json)')
+        path, _ = QFileDialog.getOpenFileName(self, 'Import Notch appearance', '', 'Notch template (*.json)')
         if path:
             try:
                 self.apply_preset(read_template(path))
@@ -251,7 +292,7 @@ class Settings(QWidget):
                 self.status.setText(str(error))
 
     def export_template(self):
-        path, _ = QFileDialog.getSaveFileName(self, 'Save Nook appearance', 'My Nook.json', 'Nook template (*.json)')
+        path, _ = QFileDialog.getSaveFileName(self, 'Save Notch appearance', 'My Notch.json', 'Notch template (*.json)')
         if path and self.save():
             try:
                 write_template(path, self.store.settings)
@@ -262,10 +303,10 @@ class Settings(QWidget):
     def desktop_page(self):
         layout = self.page('Desktop')
         layout.addWidget(label('Give your desktop a little purpose', 'section'))
-        layout.addWidget(label('Tiles sit behind normal app windows. Drag a tile by its heading. Use its ··· menu to change style, lock positions or remove it.', 'muted', True))
+        layout.addWidget(label('Tiles sit behind normal app windows. Drag a tile by its empty space. Hover to reveal its ··· menu for style, position and removal.', 'muted', True))
         form = QFormLayout()
-        theme = self.field(form, 'desktop_theme', 'Default tile style', 'combo', choices=['Glass', 'Paper', 'Midnight'])
-        layout.addLayout(form)
+        theme = self.field(form, 'desktop_theme', 'Default tile style', 'combo', choices=['Glass', 'Paper', 'Midnight', 'Graphite'])
+        self.form_card(layout, form)
         row = QHBoxLayout()
         self.desktop_kind = QComboBox()
         self.desktop_kind.addItems(KINDS)
@@ -280,7 +321,7 @@ class Settings(QWidget):
             gallery.addWidget(preview, (index // 3)*2, index % 3)
             gallery.addWidget(button(design, lambda checked=False, d=design: self.notch.desktop.add('Clock', design=d)), (index // 3)*2+1, index % 3)
         layout.addLayout(gallery)
-        for name in ('Focus desk', 'Music desk', 'Daily desk'):
+        for name in ('Reference desk', 'Focus desk', 'Music desk', 'Daily desk'):
             layout.addWidget(button('Add ' + name, lambda checked=False, n=name: self.add_desktop_layout(n)))
         layout.addWidget(label('Glass is translucent, Paper is soft and light, Midnight is dark. Layouts add three tiles without removing your existing ones.', 'muted', True))
         self.desktop_list = QListWidget()
@@ -311,24 +352,43 @@ class Settings(QWidget):
             self.notch.desktop.remove(item.data(Qt.UserRole))
             self.refresh_desktop_list()
 
+    def list_microphones(self):
+        from . import speech
+        def done(devices):
+            control = self.fields['microphone'][0]
+            selected = control.currentData()
+            control.clear()
+            control.addItem('Windows default microphone', -1)
+            for index, name in devices:
+                control.addItem(name, index)
+            control.setCurrentIndex(max(0, control.findData(selected)))
+            self.model_status.setText('Choose your microphone from the list above.' if devices else 'No microphone found. Check Windows microphone permissions.')
+        self.notch.run_job('microphones', speech.input_devices, done, lambda _: self.model_status.setText('Unable to list microphones. Check Windows microphone permissions.'))
+
     def assistant_page(self):
         layout = self.page('Assistant')
         layout.addWidget(label('A little company. Entirely local AI.', 'section'))
-        layout.addWidget(label('Local AI is included with Nook and starts when you send a message. Voice uses Windows speech and listens when you press Talk.', 'muted', True))
+        layout.addWidget(label('Local AI is included with Notch and starts when you send a message. Voice is recognised offline. Choose the accent and microphone that match your voice.', 'muted', True))
         form = QFormLayout()
         self.field(form, 'user_name', 'Your name').setMaxLength(40)
-        self.model_field = self.field(form, 'ollama_model', 'Local model', 'combo', choices=[self.store.settings['ollama_model'] or 'qwen3:0.6b'])
+        self.model_field = self.field(form, 'ollama_model', 'Local model', 'combo', choices=[self.store.settings['ollama_model'] or assistant.local_ai.MODEL])
         self.field(form, 'speak_replies', 'Read replies aloud', 'check')
-        layout.addLayout(form)
+        self.field(form, 'voice_hotkey', 'Hold Ctrl + Alt to talk', 'check')
+        self.field(form, 'speech_language', 'Speech accent', 'combo', choices=['English (US)', 'English (India)'])
+        self.field(form, 'microphone', 'Microphone', 'microphone')
+        self.field(form, 'live_news', 'Refresh current affairs every 15 minutes', 'check')
+        layout.addWidget(button('Refresh microphone choices', self.list_microphones))
+        self.form_card(layout, form)
         row = QHBoxLayout()
         row.addWidget(button('Check bundled AI', self.find_models))
         layout.addLayout(row)
         self.model_status = label('Ollama and the starter model are included in the app folder.', 'muted', True)
         layout.addWidget(self.model_status)
-        layout.addWidget(label('The starter model unloads after each reply to release memory. Keep the complete Nook folder together when moving the app.', 'muted', True))
-        layout.addWidget(label('Messages stay in memory until cleared or Nook closes. File search uses the folder selected in Behaviour. It finds filenames and opens their folders. It does not upload or edit files. Web lookup sends the search topic to Wikipedia.', 'muted', True))
+        layout.addWidget(label('The model stays ready during a conversation and releases memory when Snippy sleeps after one idle minute. The first reply after sleep needs a cold start. Clock and maths questions answer instantly without the model.', 'muted', True))
+        layout.addWidget(label('Conversations are saved on this PC in the chat library. Snippy can search and read text files in your cowork folder, summarise them, and prepare new documents for review. Web lookup sends only the search topic to Wikipedia.', 'muted', True))
         layout.addWidget(label('Snippy sleeps after one minute without activity and releases its AI service. Your name is saved on this PC for greetings.', 'muted', True))
         layout.addWidget(button('Open Snippy', self.notch.open_assistant))
+        layout.addWidget(button('Run preference setup again', self.notch.cloud.onboard))
         layout.addWidget(label('Desktop notifications', 'section'))
         layout.addWidget(label('Snippy announces new alerts from apps that send Windows notifications. In-app messages without a Windows alert cannot be detected. Notification text stays out of AI prompts and chat history.', 'muted', True))
         notifications = QFormLayout()
@@ -354,7 +414,7 @@ class Settings(QWidget):
                 self.model_field.setCurrentText(current)
             self.model_status.setText('Choose a model, then Save settings.' if names else 'Ollama is running but no local models are installed.')
         self.notch.run_job('ollama-models', assistant.models, done,
-            lambda _: self.model_status.setText('Bundled AI could not start. Check that the complete Nook folder is present.'))
+            lambda _: self.model_status.setText('Bundled AI could not start. Check that the complete app folder is present.'))
 
     def choose_color(self, field):
         color = QColorDialog.getColor(QColor(field.text()), self)
@@ -366,14 +426,15 @@ class Settings(QWidget):
         form = QFormLayout()
         form.setVerticalSpacing(13)
         self.field(form, 'city', 'Weather city')
+        self.field(form, 'weather_source', 'Weather location', 'combo', choices=['City', 'Windows location'])
         self.field(form, 'fahrenheit', 'Fahrenheit', 'check')
-        self.field(form, 'notion_token', 'Notion integration token', secret=True)
         self.field(form, 'finnhub_token', 'Finnhub API key', secret=True)
         self.field(form, 'symbols', 'Stock symbols (up to 8)')
         self.field(form, 'google_client_id', 'Google Desktop client ID')
         self.field(form, 'google_client_secret', 'Google client secret', secret=True)
-        layout.addLayout(form)
-        layout.addWidget(label('Notion shows pages shared with your integration. Google requires a Desktop OAuth client with the Calendar API enabled.', 'muted', True))
+        self.form_card(layout, form)
+        layout.addWidget(label('Windows location requires Windows permission. Forecasts are supplied by Open-Meteo, not the Windows Weather app. Units can also be changed on the widget. Google requires a Desktop OAuth client with the Calendar API enabled.', 'muted', True))
+        layout.addWidget(button('Add or manage MCP apps', self.open_mcp))
         actions = QHBoxLayout()
         actions.addWidget(button('Connect Google Calendar', self.connect_google))
         actions.addWidget(button('Disconnect Google', self.disconnect_google))
@@ -399,9 +460,9 @@ class Settings(QWidget):
         self.field(form, 'collapse_ms', 'Collapse delay (ms)', 'spin', limits=(0, 1000))
         root = self.field(form, 'search_root', 'File search folder')
         form.addRow('', button('Choose search folder', lambda: self.choose_folder(root)))
-        layout.addLayout(form)
+        self.form_card(layout, form)
         layout.addWidget(label('Search scans filenames on demand, stops after 8 seconds or 50 results, and skips dependency and system folders. Choose a narrower folder for deeper results.', 'muted', True))
-        layout.addWidget(label('Right-click the notch or use the tray icon for Settings and Quit. Escape collapses the notch. Pin keeps it open. Closing Settings leaves the notch running.', 'muted', True))
+        layout.addWidget(label('The notch expands on hover and collapses when you leave. Right-click it or use the tray icon for Settings and Quit. Drag Snippy between displays; click its expand button to open a full conversation.', 'muted', True))
         layout.addWidget(label('Account credentials are encrypted for your Windows user. Settings and tasks are saved locally in %LOCALAPPDATA%\\Nook.', 'muted', True))
         layout.addStretch()
 
@@ -424,6 +485,8 @@ class Settings(QWidget):
                 value = control.value()
             elif kind == 'font':
                 value = control.currentFont().family()
+            elif kind == 'microphone':
+                value = control.currentData()
             elif kind == 'combo':
                 value = control.currentText()
             else:
@@ -437,12 +500,18 @@ class Settings(QWidget):
         self.store.settings['enabled'] = [item.text() for item in items if item.checkState() == Qt.Checked]
         self.store.settings['screen'] = self.screen_combo.currentIndex()
         self.store.save()
+        QApplication.instance().setStyleSheet(STYLE.replace('#b7b0ff', self.store.settings['accent']))
         self.notch.rebuild()
         self.notch.desktop.sync()
         self.notch.cloud.sync_preferences()
         self.notch.notifications.configure()
         self.status.setText('Saved. Changes are live.')
         return True
+
+    def open_mcp(self):
+        from .connections_ui import ConnectionsDialog
+        self.mcp_dialog = ConnectionsDialog(self.notch)
+        self.mcp_dialog.show()
 
     def connect_google(self):
         if self.save():
@@ -477,6 +546,7 @@ class Settings(QWidget):
 class Notch(QWidget):
     def __init__(self, store):
         super().__init__()
+        self.setObjectName('notch')
         self.store = store
         self.expanded = False
         self.pinned = False
@@ -494,7 +564,7 @@ class Notch(QWidget):
         self.cover_bytes = None
         self.pending_media_actions = []
         self.preferred_player = ''
-        self.setWindowTitle('Nook')
+        self.setWindowTitle('Notch')
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
@@ -510,18 +580,18 @@ class Notch(QWidget):
         self.search_timer.setInterval(300)
         self.search_timer.timeout.connect(self.search)
         self.root = QVBoxLayout(self)
-        self.root.setContentsMargins(20, 0, 20, 12)
+        self.root.setContentsMargins(20, 0, 20, 6)
         self.root.setSizeConstraint(QLayout.SetNoConstraint)
         self.root.setSpacing(6)
         self.header = QWidget()
         self.header.setFixedHeight(self.store.settings['compact_height'])
         header = QHBoxLayout(self.header)
         header.setContentsMargins(0, 0, 0, 0)
-        self.compact_art = AlbumArt(34)
+        self.compact_art = AlbumArt(26)
         header.addWidget(self.compact_art)
         compact_text = QVBoxLayout()
         compact_text.setSpacing(1)
-        self.compact = TrackLabel('Nook')
+        self.compact = TrackLabel('Notch')
         self.compact_artist = TrackLabel('Your desktop essentials')
         self.compact_artist.setStyleSheet('font-size: 10px; color: #99999f;')
         compact_text.addWidget(self.compact)
@@ -554,15 +624,14 @@ class Notch(QWidget):
         self.task_timer.timeout.connect(self.refresh_tasks)
         self.task_timer.start(15000)
         self.menu = QMenu()
-        self.menu.addAction('Expand', lambda: self.expand(True))
         self.menu.addAction('Settings', self.open_settings)
         self.menu.addAction('Open Snippy', self.open_assistant)
         self.menu.addSeparator()
-        self.menu.addAction('Quit Nook', lambda: QApplication.exit(0))
+        self.menu.addAction('Quit Notch', lambda: QApplication.exit(0))
         icon = QPixmap(64, 64)
         icon.fill(Qt.transparent)
         painter = QPainter(icon)
-        painter.setBrush(QColor('#b7b0ff'))
+        painter.setBrush(QColor(self.store.settings['accent']))
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(5, 9, 54, 38, 12, 12)
         painter.setPen(QColor('#141217'))
@@ -571,7 +640,7 @@ class Notch(QWidget):
         painter.end()
         self.setWindowIcon(QIcon(icon))
         self.tray = QSystemTrayIcon(QIcon(icon), self)
-        self.tray.setToolTip('Nook · Your desktop essentials')
+        self.tray.setToolTip('Notch · Your desktop essentials')
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(lambda reason: self.open_settings() if reason == QSystemTrayIcon.DoubleClick else None)
         self.tray.show()
@@ -631,34 +700,34 @@ class Notch(QWidget):
         screens = QApplication.screens()
         screen = screens[min(max(0, self.store.settings['screen']), len(screens) - 1)]
         bounds = screen.geometry()
-        width = min(self.store.settings['width'], bounds.width() - 110)
+        width = min(self.store.settings['width' if self.expanded else 'compact_width'], bounds.width() - 110)
         expanded_height = self.store.settings['music_height'] if self.view == 'Music' else self.store.settings['height']
-        height = min(expanded_height if self.expanded else self.store.settings['music_height'], bounds.height() - 40)
+        height = min(expanded_height if self.expanded else self.store.settings['compact_height'], bounds.height() - 40)
         return QRect(bounds.x() + (bounds.width() - width) // 2, bounds.y(), width, height)
 
     def reposition(self, *_):
         self.animation.stop()
-        if self.expanded:
-            self.body.setMinimumSize(0, 0)
-            self.body.setMaximumSize(16777215, 16777215)
+        self.body.setMinimumSize(0, 0)
+        self.body.setMaximumSize(16777215, 16777215)
+        self.body.setVisible(self.expanded)
         self.setGeometry(self.target_geometry())
 
     def expand(self, expanded):
         start_geometry = self.geometry()
         self.collapse_timer.stop()
-        if not expanded:
-            self.pinned = False
-            self.pin.setIcon(media_icon('pin'))
-            self.switch_view('Music')
         if self.expanded == expanded:
             return
-        self.expanded = expanded
-        self.update_clock()
         self.animation.stop()
-        self.body.setVisible(True)
+        self.expanded = expanded
+        if not expanded:
+            self.pinned = False
+            self.switch_view('Music')
+        self.update_clock()
+        self.body.setVisible(expanded)
         header_space = 0 if self.header.isHidden() else self.header.height() + 6
-        self.body.setFixedSize(self.target_geometry().width() - 40,
-                               self.target_geometry().height() - header_space - 12)
+        if expanded:
+            self.body.setFixedSize(self.target_geometry().width() - 40,
+                                   max(0, self.target_geometry().height() - header_space - 6))
         if self.store.settings['animation']:
             self.animation.setDuration(150 if expanded else 120)
             self.animation.setStartValue(start_geometry)
@@ -670,7 +739,7 @@ class Notch(QWidget):
         self.update_clock()
 
     def animation_finished(self):
-        self.body.setVisible(True)
+        self.body.setVisible(self.expanded)
         self.body.setMinimumSize(0, 0)
         self.body.setMaximumSize(16777215, 16777215)
         if self.expanded:
@@ -686,8 +755,7 @@ class Notch(QWidget):
         self.collapse_timer.start(self.store.settings['collapse_ms'])
 
     def maybe_collapse(self):
-        chatting = self.view == 'Assistant' and (self.assistant_panel.busy or self.assistant_panel.input.hasFocus())
-        if not self.pinned and not self.geometry().contains(QCursor.pos()) and not chatting and not (self.view == 'Files' and self.search_input.hasFocus()):
+        if not self.geometry().contains(QCursor.pos()):
             self.expand(False)
 
     def mousePressEvent(self, event):
@@ -704,21 +772,15 @@ class Notch(QWidget):
         self.settings_window.activateWindow()
 
     def toggle_pin(self):
-        self.pinned = not self.pinned
-        self.pin.setIcon(media_icon('pin', self.store.settings['accent'] if self.pinned else '#88888e'))
-        self.pin.setToolTip('Unpin notch' if self.pinned else 'Pin notch')
-        if not self.pinned:
-            self.collapse_timer.start(self.store.settings['collapse_ms'])
+        self.expand(False)
 
     def open_assistant(self):
         if hasattr(self, 'cloud'):
             self.cloud.open_fullscreen()
 
     def preview(self):
-        self.pinned = True
-        self.pin.setIcon(media_icon('pin', self.store.settings['accent']))
-        self.pin.setToolTip('Unpin notch')
-        self.expand(True)
+        self.expand(False)
+        self.reposition()
 
     def card(self, title):
         frame = QFrame()
@@ -762,6 +824,7 @@ class Notch(QWidget):
         self.pin.setObjectName('mediaControl')
         self.pin.setFixedSize(26, 26)
         toolbar.addWidget(self.pin)
+        self.pin.hide()
         settings = button('', self.open_settings, 'Settings')
         settings.setIcon(media_icon('settings', '#88888e'))
         settings.setObjectName('mediaControl')
@@ -814,7 +877,7 @@ class Notch(QWidget):
                 self.time_label.setStyleSheet('font-family: "%s"; font-size: %spx; color: #f5f5f7;' % (self.store.settings['font'], size))
                 calendar_header = QHBoxLayout()
                 calendar_header.addWidget(self.time_label)
-                calendar_header.addWidget(WeekStrip(), 1)
+                calendar_header.addWidget(WeekStrip(self.store.settings['accent']), 1)
                 layout.addLayout(calendar_header)
                 self.date_label = label('', 'muted', True)
                 layout.addWidget(self.date_label)
@@ -822,7 +885,7 @@ class Notch(QWidget):
             elif name == 'To do':
                 self.todo_layout = layout
                 self.build_todos()
-            elif name in ('Google Calendar', 'Notion'):
+            elif name == 'Google Calendar':
                 self.link_layouts[name] = layout
                 self.widget_labels[name] = label('Connect in Settings to see your ' + ('events.' if name == 'Google Calendar' else 'pages.'), 'muted', True)
                 layout.addWidget(self.widget_labels[name])
@@ -848,13 +911,18 @@ class Notch(QWidget):
                 text = {'Weather': 'Set your city in Settings.', 'Stocks': 'Add a Finnhub key in Settings.', 'Running tasks': 'Checking running apps…'}.get(name, '')
                 self.widget_labels[name] = label(text, 'muted', True)
                 layout.addWidget(self.widget_labels[name])
+                if name == 'Weather':
+                    units = QHBoxLayout()
+                    for text, fahrenheit in [('°C', False), ('°F', True)]:
+                        units.addWidget(button(text, lambda checked=False, f=fahrenheit: self.set_weather_unit(f)))
+                    layout.addLayout(units)
                 if name == 'Running tasks':
                     layout.addWidget(label('Process presence only. Task completion requires an agent integration.', 'muted', True))
         self.cards.setRowStretch(self.card_row, 1)
         if self.assistant_panel is None:
             self.assistant_panel = AssistantPanel(self)
         self.body_layout.addWidget(self.assistant_panel, 1)
-        self.body.show()
+        self.body.setVisible(self.expanded)
         self.switch_view(self.view)
         self.reposition()
         self.update_clock()
@@ -889,7 +957,7 @@ class Notch(QWidget):
             return
         self._cards_signature = signature
         self.empty_idle.setVisible(self.view == 'Music' and not visible)
-        self.view_buttons['Music'].setText('Music' if available else 'Nook')
+        self.view_buttons['Music'].setText('Music' if available else 'Notch')
         for row in range(self.cards.rowCount()):
             self.cards.setRowStretch(row, 0)
         for title, frame in self.card_frames.items():
@@ -981,6 +1049,8 @@ class Notch(QWidget):
                 clear(item.layout())
                 item.layout().deleteLater()
         for index, task in enumerate(self.store.settings['todos']):
+            if task.get('done'):
+                continue
             row = QHBoxLayout()
             check = QCheckBox()
             check.setText(check.fontMetrics().elidedText(task['text'], Qt.ElideRight, 190))
@@ -1012,6 +1082,12 @@ class Notch(QWidget):
     def toggle_todo(self, index, value):
         self.store.settings['todos'][index]['done'] = value
         self.store.save()
+        QTimer.singleShot(0, self.refresh_todos)
+
+    def refresh_todos(self):
+        if hasattr(self, 'todo_layout'):
+            self.build_todos()
+        self.desktop.refresh()
 
     def remove_todo(self, index):
         self.store.settings['todos'].pop(index)
@@ -1035,13 +1111,15 @@ class Notch(QWidget):
         if not self.store.settings['hour24']:
             text = text.lstrip('0') + now.strftime(' %p')
         self.clock.setText(text if 'Time' in self.store.settings['enabled'] else '')
-        compact_visible = self.view != 'Music'
-        self.header.setFixedHeight((38 if self.expanded else self.store.settings['compact_height'] - 12) if compact_visible else 6)
+        compact_visible = not self.expanded or self.view != 'Music'
+        self.header.setVisible(compact_visible)
+        self.header.setFixedHeight(36 if self.expanded else self.store.settings['compact_height'] - 6)
         self.clock.setVisible(compact_visible)
         active = bool(self.media_state.get('has_track', self.media_state.get('source'))) and 'Music' in self.store.settings['enabled']
-        self.compact.setText(self.media_state.get('title', 'Nook') if active else 'Nook')
+        self.compact.setText(self.media_state.get('title', 'Notch') if active else now.strftime('%a, %d %b'))
         self.compact.setVisible(compact_visible)
-        self.compact_artist.setText(self.media_state.get('artist', '') if active else 'Your desktop essentials')
+        tasks = [row['text'] for row in self.store.settings['todos'] if not row.get('done')]
+        self.compact_artist.setText(self.media_state.get('artist', '') if active else (tasks[0] if tasks and 'To do' in self.store.settings['enabled'] else 'Hover for your widgets'))
         self.compact_artist.setVisible(compact_visible)
         self.compact_art.setVisible(active and compact_visible)
         self.compact_state.setVisible(active and compact_visible)
@@ -1132,10 +1210,8 @@ class Notch(QWidget):
     def refresh_widgets(self):
         s = self.store.settings
         jobs = {}
-        if s['city']:
-            jobs['Weather'] = lambda: services.weather(s['city'], s['fahrenheit'])
-        if self.store.secret('notion_token'):
-            jobs['Notion'] = lambda: services.notion(self.store.secret('notion_token'))
+        if s['city'] or s.get('weather_source') == 'Windows location':
+            jobs['Weather'] = lambda: services.weather(s['city'], s['fahrenheit'], s.get('weather_source') == 'Windows location', structured=True)
         if self.store.secret('finnhub_token'):
             jobs['Stocks'] = lambda: services.stocks(s['symbols'], self.store.secret('finnhub_token'))
         if self.store.secret('google_tokens'):
@@ -1160,6 +1236,8 @@ class Notch(QWidget):
                     for title, url in value:
                         layout.addWidget(button(title, lambda checked=False, u=url: open_url(u)))
                 else:
+                    if name == 'Weather' and isinstance(value, dict):
+                        value = services.format_weather(value)
                     if name == 'Weather' and s['weather_style'] == 'Compact':
                         value = value.split('\n')[0]
                     self.widget_labels[name].setText(value)
@@ -1169,6 +1247,11 @@ class Notch(QWidget):
                     self.widget_labels[name].setText(message)
             self.run_job(name, work, done, failed)
         self.refresh_tasks()
+
+    def set_weather_unit(self, fahrenheit):
+        self.store.settings['fahrenheit'] = fahrenheit
+        self.store.save()
+        self.refresh_widgets()
 
     def refresh_tasks(self):
         if self.expanded and 'Running tasks' in self.widget_labels:

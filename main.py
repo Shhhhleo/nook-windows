@@ -13,7 +13,7 @@ def main():
     if ctypes.windll.kernel32.GetCurrentPackageFullName(ctypes.byref(length), None) == 15700:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Nook.Windows')
     app = QApplication(sys.argv)
-    app.setApplicationName('Nook')
+    app.setApplicationName('Notch')
     app.setQuitOnLastWindowClosed(False)
     app.setStyle('Fusion')
     app.setStyleSheet(STYLE)
@@ -25,13 +25,18 @@ def main():
     def report(kind, value, trace):
         logging.error('Unhandled error', exc_info=(kind, value, trace))
     sys.excepthook = report
-    notch = Notch(Store())
+    store = Store()
+    app.setStyleSheet(STYLE.replace('#b7b0ff', store.settings['accent']))
+    notch = Notch(store)
     notch.show()
-    if not notch.store.settings.get('user_name'):
+    from nook.news import start_monitor
+    start_monitor(notch)
+    if not notch.store.settings.get('onboarding_complete'):
         QTimer.singleShot(300, notch.cloud.onboard)
     elif '--settings' in sys.argv:
         QTimer.singleShot(300, notch.open_settings)
     result = app.exec()
+    notch.cloud.voice.close()
     notch.search_cancel.set()
     lock.unlock()
     return result

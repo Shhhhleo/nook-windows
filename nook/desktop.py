@@ -11,11 +11,12 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
 from .visuals import AlbumArt, TrackLabel, media_icon, VinylArt
 from .presets import THEMES
 from .clocks import ClockFace, DESIGNS
+from .tiles import InfoFace
 
-KINDS = ('Clock', 'Music', 'To do', 'Weather', 'Calendar', 'Note', 'Photo')
+KINDS = ('Clock', 'Music', 'To do', 'Weather', 'Calendar', 'Note', 'Photo', 'Battery')
 SIZES = {'Clock': (220, 180), 'Music': (240, 270), 'To do': (260, 280),
-         'Weather': (240, 190), 'Calendar': (240, 250), 'Note': (240, 220), 'Photo': (240, 240)}
-PALETTES = {'Glass': ('#dce1e7', '#242a32', '#5a626d', 205),
+         'Battery': (220, 220), 'Weather': (220, 258), 'Calendar': (456, 220), 'Note': (240, 220), 'Photo': (240, 240)}
+PALETTES = {'Graphite': ('#2b2b2d', '#f7f7f8', '#b4b4b8', 235), 'Glass': ('#dce1e7', '#242a32', '#5a626d', 205),
             'Paper': ('#f2eee6', '#32302d', '#726b62', 246),
             'Midnight': ('#17181d', '#f4f4f7', '#b0b0bd', 235)}
 
@@ -37,7 +38,7 @@ class DesktopTile(QWidget):
         self.art_bytes = None
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnBottomHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowTitle('Nook desktop · ' + self.kind)
+        self.setWindowTitle('Notch desktop · ' + self.kind)
         self.resize(*SIZES[self.kind])
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -111,6 +112,18 @@ class DesktopTile(QWidget):
             self.choose_button.clicked.connect(self.choose_photo)
             self.content.addWidget(self.choose_button)
             self.load_photo()
+        elif self.kind in ('Weather', 'Calendar', 'Battery'):
+            self.info = InfoFace(self.kind)
+            self.content.addWidget(self.info, 1)
+            if self.kind == 'Weather':
+                root.setContentsMargins(0, 0, 0, 8)
+                row = QHBoxLayout()
+                for unit, flag in [('°C', False), ('°F', True)]:
+                    control = QPushButton(unit)
+                    control.setAccessibleName('Use ' + unit)
+                    control.clicked.connect(lambda checked=False, f=flag: self.notch.set_weather_unit(f))
+                    row.addWidget(control)
+                self.content.addLayout(row)
         else:
             self.large = plain('')
             self.large.setStyleSheet('font-size: 42px; font-weight: 500;')
@@ -118,6 +131,14 @@ class DesktopTile(QWidget):
             self.detail = plain('')
             self.detail.setStyleSheet('font-size: 12px;')
             self.content.addWidget(self.detail, 1)
+            if self.kind == 'Weather':
+                units = QHBoxLayout()
+                for text, fahrenheit in [('°C', False), ('°F', True)]:
+                    control = QPushButton(text)
+                    control.setAccessibleName('Use Celsius' if not fahrenheit else 'Use Fahrenheit')
+                    control.clicked.connect(lambda checked=False, f=fahrenheit: self.notch.set_weather_unit(f))
+                    units.addWidget(control)
+                self.content.addLayout(units)
         self.apply_theme()
         self.restore_position()
         self.refresh()
@@ -139,6 +160,9 @@ class DesktopTile(QWidget):
         theme = self.config.get('theme') or self.notch.store.settings['desktop_theme']
         self.colors = PALETTES.get(theme, PALETTES['Glass'])
         _, foreground, muted, _ = self.colors
+        if hasattr(self, 'info'):
+            self.info.ink, self.info.muted = foreground, muted
+            self.info.update()
         self.setStyleSheet('''QWidget { color: %s; background: transparent; }
             QPushButton { border: 0; border-radius: 7px; padding: 2px; }
             QPushButton:hover { background: rgba(128,128,128,35); }
@@ -155,6 +179,10 @@ class DesktopTile(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         background, _, _, alpha = self.colors
+        if self.kind == 'Clock' and self.face.design == 'Numeral':
+            background, alpha = '#fafaf7', 255
+        if self.kind == 'Weather':
+            background, alpha = '#28568a', 255
         color = QColor(background)
         color.setAlpha(alpha)
         gradient = QLinearGradient(0, 0, self.width()*.6, self.height())
@@ -227,19 +255,19 @@ class DesktopTile(QWidget):
         if self.kind == 'Clock':
             self.face.update()
         elif self.kind == 'Calendar':
-            self.large.setText(now.strftime('%d').lstrip('0'))
             deadlines = self.notch.store.settings['deadlines']
             today = [r['title'] for r in deadlines if r['due'][:10] == now.strftime('%Y-%m-%d')]
+            upcoming = [r['title'] for r in sorted(deadlines, key=lambda r:r['due']) if r['due'][:10] >= now.strftime('%Y-%m-%d')]
             events = self.notch.widget_data.get('Google Calendar', [])
-            titles = [r[0] for r in events[:2]] if isinstance(events, list) else []
-            self.detail.setText(now.strftime('%A · %B') + '\n\n' + '\n'.join((today + titles)[:3])
-                                if today or titles else now.strftime('%A · %B') + '\n\nNo connected events.\nConnect Calendar in Settings.')
+            titles = [r[0] for r in events[:3]] if isinstance(events, list) else []
+            self.info.data = {'today': today[0] if today else 'No events today', 'events': (titles+upcoming)[:4]}
+            self.info.update()
         elif self.kind == 'Weather':
-            text = self.notch.widget_data.get('Weather', 'Set a city in Settings → Connections.')
-            self.large.setStyleSheet('font-size: 23px; font-weight: 500;')
-            lines = str(text).split('\n')
-            self.large.setText(lines[0])
-            self.detail.setText('\n'.join(lines[1:]))
+            self.info.data = self.notch.widget_data.get('Weather', {})
+            self.info.update()
+        elif self.kind == 'Battery':
+            self.info.refresh_battery()
+            self.info.update()
         elif self.kind == 'Music':
             state = self.notch.media_state
             self.title.setText(state.get('title', 'Nothing playing'))
@@ -267,13 +295,15 @@ class DesktopTile(QWidget):
                     item.widget().hide()
                     item.widget().deleteLater()
             for index, task in enumerate(tasks):
+                if task.get('done'):
+                    continue
                 check = QCheckBox()
                 check.setText(check.fontMetrics().elidedText(task['text'], Qt.ElideRight, self.width()-78))
                 check.setToolTip(task['text'])
                 check.setChecked(task.get('done', False))
                 check.toggled.connect(lambda value, i=index: self.toggle_task(i, value))
                 self.tasks.addWidget(check)
-            if not tasks:
+            if not any(not task.get('done') for task in tasks):
                 self.tasks.addWidget(plain('A clear desk. Add your first task below.'))
             self.tasks.addStretch()
 
@@ -353,14 +383,14 @@ class DesktopManager:
         else:
             self.timer.stop()
 
-    def add(self, kind, x=None, y=None, design=None):
+    def add(self, kind, x=None, y=None, design=None, theme=None):
         if len(self.windows) >= 20:
             return
         bounds = QApplication.primaryScreen().availableGeometry()
         offset = len(self.windows) % 5 * 28
         self.notch.store.settings['desktop_widgets'].append({'id': uuid.uuid4().hex, 'kind': kind,
             'x': bounds.x() + 24 + offset if x is None else x,
-            'y': bounds.y() + 80 + offset if y is None else y, 'design': design or 'Numeral'})
+            'y': bounds.y() + 80 + offset if y is None else y, 'design': design or 'Numeral', 'theme': theme})
         self.notch.store.save()
         self.sync()
         self.notch.refresh_widgets()
@@ -369,11 +399,12 @@ class DesktopManager:
     def add_layout(self, name):
         bounds = QApplication.primaryScreen().availableGeometry()
         left, top, right = bounds.left()+24, bounds.top()+80, bounds.right()-280
-        layouts = {'Focus desk': [('Clock', left, top), ('To do', left, top+196), ('Note', right, top)],
-                   'Music desk': [('Music', left, top), ('Clock', right, top), ('Weather', right, top+196)],
-                   'Daily desk': [('Clock', left, top), ('Calendar', left, top+196), ('To do', right, top)]}
+        layouts = {'Reference desk': [('Battery', left, top), ('Clock', left+236, top), ('Weather', left+472, top), ('Calendar', left, top+236)],
+                   'Focus desk': [('Clock', left, top), ('To do', left, top+236), ('Note', right, top)],
+                   'Music desk': [('Music', left, top), ('Clock', right, top), ('Weather', right, top+236)],
+                   'Daily desk': [('Clock', left, top), ('Calendar', left, top+236), ('To do', right, top)]}
         for kind, x, y in layouts[name]:
-            self.add(kind, x, y)
+            self.add(kind, x, y, theme='Graphite' if name == 'Reference desk' else None)
 
     def remove(self, identity):
         self.notch.store.settings['desktop_widgets'] = [r for r in self.notch.store.settings['desktop_widgets'] if r['id'] != identity]

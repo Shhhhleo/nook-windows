@@ -12,13 +12,14 @@ import socket
 
 PORT = 11435
 BASE = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parents[1] / 'vendor'
-MODEL = 'qwen3:0.6b'
+MODEL = 'qwen3:1.7b'
 _process = None
+_ready = False
 request_lock = threading.RLock()
 
 
 def stop():
-    global _process
+    global _process, _ready
     # Serialise shutdown with requests, and only terminate children of our service.
     with request_lock:
         if _process is not None and _process.poll() is None:
@@ -44,15 +45,19 @@ def stop():
                 except psutil.NoSuchProcess:
                     pass
         _process = None
+        _ready = False
 
 
 def ensure_running():
-    global _process
+    global _process, _ready
     executable = BASE / 'ollama/ollama.exe'
     if not executable.is_file():
-        raise ValueError('Bundled AI runtime is missing. Restore the complete Nook app folder.')
+        raise ValueError('Bundled AI runtime is missing. Restore the complete Notch app folder.')
     with request_lock:
+        if _ready and _process is not None and _process.poll() is None:
+            return
         if _process is None or _process.poll() is not None:
+            _ready = False
             # Do not attach to another app's service if this private port is busy.
             with socket.socket() as probe:
                 if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
@@ -60,10 +65,10 @@ def ensure_running():
                 try:
                     probe.bind(('127.0.0.1', PORT))
                 except OSError as error:
-                    raise ValueError('The local AI port is already in use. Close the other Nook instance and try again.') from error
+                    raise ValueError('The local AI port is already in use. Close the other Notch instance and try again.') from error
             environment = dict(os.environ, OLLAMA_HOST=f'127.0.0.1:{PORT}',
                                OLLAMA_MODELS=str(BASE / 'models'), OLLAMA_NO_CLOUD='1',
-                               OLLAMA_KEEP_ALIVE='0', OLLAMA_NUM_PARALLEL='1')
+                               OLLAMA_KEEP_ALIVE='90s', OLLAMA_NUM_PARALLEL='1')
             _process = subprocess.Popen([str(executable), 'serve'], env=environment,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW)
@@ -71,12 +76,13 @@ def ensure_running():
         for attempt in range(40):
             try:
                 if _process.poll() is not None:
-                    raise ValueError('The bundled AI service could not start. Restart Nook and try again.')
+                    raise ValueError('The bundled AI service could not start. Restart Notch and try again.')
                 with opener.open(f'http://127.0.0.1:{PORT}/api/tags', timeout=1):
+                    _ready = True
                     return
             except OSError:
                 if _process.poll() is not None:
-                    raise ValueError('The bundled AI service could not start. Restart Nook and try again.')
+                    raise ValueError('The bundled AI service could not start. Restart Notch and try again.')
                 time.sleep(0.25)
         raise ValueError('Local AI is taking too long to start. Try again.')
 
