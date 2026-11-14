@@ -13,10 +13,10 @@ DEFAULTS = dict(enabled=['Music', 'Time', 'To do'], order=WIDGETS, width=840,
                 compact_width=700, compact_height=42, music_height=132,
                 height=300, radius=20, opacity=100, screen=0,
                 accent='#b7b0ff', font='Segoe UI Semibold', clock_style='Minimal', weather_style='Detailed',
-                hour24=False, seconds=False, animation=True, collapse_ms=90, ui_revision=6,
+                hour24=False, seconds=False, animation=True, collapse_ms=90, ui_revision=7,
                 city='', fahrenheit=False, symbols='AAPL, MSFT', search_root=str(Path.home()),
                 google_client_id='', google_client_secret='', todos=[], deadlines=[],
-                desktop_theme='Glass', desktop_widgets=[], desktop_locked=False,
+                desktop_theme='macOS', desktop_widgets=[], desktop_locked=False,
                 ollama_model='', speak_replies=False, user_name='', greeting_index=0,
                 notifications_enabled=False, notifications_preview=False, notifications_apps='',
                 onboarding_complete=False, voice_hotkey=False, snippy_position=None,
@@ -78,6 +78,10 @@ class Store:
                 for key, mapping in replacements.items():
                     self.settings[key] = mapping.get(self.settings[key], self.settings[key])
                 self.settings['ui_revision'] = 6
+            if self.settings.get('ui_revision', 1) < 7:
+                if self.settings.get('desktop_theme') == 'Glass':
+                    self.settings['desktop_theme'] = 'macOS'  # New default tile style.
+                self.settings['ui_revision'] = 7
         except FileNotFoundError:
             pass
         except (ValueError, OSError):

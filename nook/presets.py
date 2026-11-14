@@ -4,7 +4,7 @@ from pathlib import Path
 
 PRESETS = {
     'Everyday': dict(width=840, music_height=132, compact_width=700, compact_height=42,
-                     height=300, radius=20, opacity=100, desktop_theme='Glass'),
+                     height=300, radius=20, opacity=100, desktop_theme='macOS'),
     'Focus': dict(width=760, music_height=132, compact_width=620, compact_height=40,
                   height=300, radius=18, opacity=100, desktop_theme='Paper'),
     'Studio': dict(width=960, music_height=140, compact_width=800, compact_height=44,
@@ -17,7 +17,7 @@ DESCRIPTIONS = {
 }
 LIMITS = {'width': (460, 1100), 'music_height': (128, 240), 'compact_width': (320, 1100),
           'compact_height': (36, 90), 'height': (300, 850), 'radius': (8, 48), 'opacity': (65, 100)}
-THEMES = ('Glass', 'Paper', 'Midnight', 'Graphite')
+THEMES = ('macOS', 'Glass', 'Paper', 'Midnight', 'Graphite')
 
 
 def validate_template(value):

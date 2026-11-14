@@ -236,7 +236,7 @@ class SnippyTests(unittest.TestCase):
                 widget.config['path'] = str(path)
                 widget.load_photo()
                 self.assertTrue(widget.choose_button.isHidden())
-                self.assertEqual(widget.photo.pixmap().width(), widget.width()-32)
+                self.assertEqual(widget.photo.pixmap().width(), widget.width())
         for identity in list(self.notch.desktop.windows):
             self.notch.desktop.remove(identity)
 

@@ -25,7 +25,7 @@ class InfoFace(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.scale(self.width()/ (440 if self.kind == 'Calendar' else 220), self.height()/220)
+        p.scale(self.width()/ (468 if self.kind == 'Calendar' else 222), self.height()/222)
         def text(x, y, w, h, value, size=14, color=None, weight=QFont.DemiBold):
             p.setPen(QColor(color or ('white' if self.kind == 'Weather' else self.ink))); p.setFont(QFont('Segoe UI', size, weight))
             clipped = p.fontMetrics().elidedText(str(value), Qt.ElideRight, int(w))
@@ -34,7 +34,7 @@ class InfoFace(QWidget):
             gradient = QLinearGradient(0,0,80,220)
             gradient.setColorAt(0, QColor('#183b71')); gradient.setColorAt(1, QColor('#508ac2'))
             p.setBrush(gradient); p.setPen(QPen(QColor('#83a8d0'),1))
-            p.drawRoundedRect(QRectF(1,1,218,218),29,29)
+            p.drawRoundedRect(QRectF(.5,.5,221,221),22,22)
             data = self.data
             if not isinstance(data, dict) or 'temperature' not in data:
                 text(22,22,180,28,'Weather',18)
@@ -55,26 +55,31 @@ class InfoFace(QWidget):
             text(22,188,175,20,f'H:{high:g}°  L:{low:g}°' if high is not None and low is not None else 'Forecast unavailable',12)
         elif self.kind == 'Calendar':
             now = datetime.now()
-            text(10,10,190,25,now.strftime('%A').upper(),12,'#ff565e')
-            text(10,37,170,60,str(now.day),40,weight=QFont.Normal)
-            text(218,10,212,25,'UPCOMING',11,self.muted)
+            text(24,22,190,22,now.strftime('%A').upper(),11,'#ff565e')
+            text(24,44,170,56,str(now.day),38,weight=QFont.Normal)
+            text(24,150,200,28,self.data.get('today','No Events Today'),11,self.muted)
+            text(262,22,190,20,self.data.get('next',''),10,self.muted)
             events = self.data.get('events',[])[:4]
-            text(10,160,195,30,self.data.get('today','No events today'),12,self.muted)
             if not events:
-                text(218,55,212,28,'No connected events',12,self.muted)
+                text(262,48,190,24,'No connected events',11,self.muted)
             for i,title in enumerate(events):
                 p.setPen(Qt.NoPen); p.setBrush(QColor('#47374d'))
-                p.drawRoundedRect(QRectF(215,47+i*35,215,29),10,10)
-                text(226,47+i*35,197,29,title,12,'#d78be8')
+                p.drawRoundedRect(QRectF(258,48+i*34,186,27),8,8)
+                text(268,48+i*34,170,27,title,11,'#d78be8')
         elif self.kind == 'Battery':
             for i in range(4):
-                x,y = 12+(i%2)*104, 12+(i//2)*104
-                p.setBrush(Qt.NoBrush); p.setPen(QPen(QColor('#46464a'),8,Qt.SolidLine,Qt.RoundCap))
+                x,y = 15+(i%2)*104, 15+(i//2)*104
+                p.setBrush(Qt.NoBrush); p.setPen(QPen(QColor('#3a3a3e'),8,Qt.SolidLine,Qt.RoundCap))
                 p.drawEllipse(QRectF(x,y,88,88))
                 if i == 0 and self.battery:
                     p.setPen(QPen(QColor('#2cce56'),8,Qt.SolidLine,Qt.RoundCap))
                     p.drawArc(QRectF(x,y,88,88),90*16,-int(self.battery.percent*3.6*16))
-                    text(x+14,y+32,64,30,f'{self.battery.percent:g}%',13)
-            if not self.battery:
-                text(22,41,70,20,'AC',16,self.muted)
+                if i == 0:
+                    p.setBrush(Qt.NoBrush); p.setPen(QPen(QColor(self.ink),2.4,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+                    p.drawRoundedRect(QRectF(x+29,y+29,30,20),3,3)
+                    p.drawLine(x+24,y+57,x+64,y+57)
+                    if self.battery:
+                        text(x+14,y+60,60,18,f'{self.battery.percent:g}%',8,self.muted)
+                    else:
+                        text(x+14,y+60,60,18,'AC',8,self.muted)
             self.setToolTip('PC battery' if self.battery else 'No battery reported by Windows. Empty rings are unconnected devices.')

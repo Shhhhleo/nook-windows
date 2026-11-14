@@ -1,7 +1,7 @@
 """Independent desktop tiles sharing the notch's data and worker pool."""
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl, QRectF, QSize
@@ -14,9 +14,10 @@ from .clocks import ClockFace, DESIGNS
 from .tiles import InfoFace
 
 KINDS = ('Clock', 'Music', 'To do', 'Weather', 'Calendar', 'Note', 'Photo', 'Battery')
-SIZES = {'Clock': (220, 180), 'Music': (240, 270), 'To do': (260, 280),
-         'Battery': (220, 220), 'Weather': (220, 258), 'Calendar': (456, 220), 'Note': (240, 220), 'Photo': (240, 240)}
-PALETTES = {'Graphite': ('#2b2b2d', '#f7f7f8', '#b4b4b8', 235), 'Glass': ('#dce1e7', '#242a32', '#5a626d', 205),
+UNIT, WIDE, GAP, RADIUS = 222, 468, 24, 22   # macOS widget grid: small tile, double-wide tile, gap, corner radius
+SIZES = {kind: (UNIT, UNIT) for kind in KINDS}
+SIZES['Calendar'] = (WIDE, UNIT)
+PALETTES = {'macOS': ('#1f1f22', '#ffffff', '#9d9da3', 232), 'Graphite': ('#2b2b2d', '#f7f7f8', '#b4b4b8', 235), 'Glass': ('#dce1e7', '#242a32', '#5a626d', 205),
             'Paper': ('#f2eee6', '#32302d', '#726b62', 246),
             'Midnight': ('#17181d', '#f4f4f7', '#b0b0bd', 235)}
 
@@ -47,20 +48,16 @@ class DesktopTile(QWidget):
         self.heading.setParent(self)
         self.heading.hide()
         self.setAccessibleName(self.kind + ' desktop widget')
-        self.menu_button = QPushButton('···', self)
-        self.menu_button.setFixedSize(24, 22)
-        self.menu_button.setAccessibleName(self.kind + ' widget options')
-        self.menu_button.clicked.connect(self.options)
-        self.menu_button.hide()
         self.content = QVBoxLayout()
         self.content.setSpacing(8)
         root.addLayout(self.content, 1)
         if self.kind == 'Clock':
             self.face = ClockFace(config.get('design', 'Numeral'))
-            self.resize(440, 180) if self.face.design == 'World row' else self.resize(220, 220)
+            self.resize(*self.clock_size())
+            root.setContentsMargins(0, 0, 0, 0)
             self.content.addWidget(self.face, 1)
         elif self.kind == 'Music':
-            self.art = VinylArt(120)
+            self.art = VinylArt(96)
             self.content.addWidget(self.art, 0, Qt.AlignHCenter)
             self.title = TrackLabel('Nothing playing')
             self.title.setStyleSheet('font-weight: 600;')
@@ -107,23 +104,18 @@ class DesktopTile(QWidget):
         elif self.kind == 'Photo':
             self.photo = QLabel()
             self.photo.setAlignment(Qt.AlignCenter)
+            self.photo.setWordWrap(True)
+            self.photo.setMinimumSize(0, 0)
             self.content.addWidget(self.photo, 1)
             self.choose_button = QPushButton('Choose photo')
             self.choose_button.clicked.connect(self.choose_photo)
             self.content.addWidget(self.choose_button)
+            root.setContentsMargins(0, 0, 0, 0)
             self.load_photo()
         elif self.kind in ('Weather', 'Calendar', 'Battery'):
             self.info = InfoFace(self.kind)
             self.content.addWidget(self.info, 1)
-            if self.kind == 'Weather':
-                root.setContentsMargins(0, 0, 0, 8)
-                row = QHBoxLayout()
-                for unit, flag in [('°C', False), ('°F', True)]:
-                    control = QPushButton(unit)
-                    control.setAccessibleName('Use ' + unit)
-                    control.clicked.connect(lambda checked=False, f=flag: self.notch.set_weather_unit(f))
-                    row.addWidget(control)
-                self.content.addLayout(row)
+            root.setContentsMargins(0, 0, 0, 0)
         else:
             self.large = plain('')
             self.large.setStyleSheet('font-size: 42px; font-weight: 500;')
@@ -142,23 +134,18 @@ class DesktopTile(QWidget):
         self.apply_theme()
         self.restore_position()
         self.refresh()
-        self.menu_button.raise_()
 
-    def enterEvent(self, event):
-        self.menu_button.show()
-
-    def leaveEvent(self, event):
-        self.menu_button.hide()
+    def clock_size(self):
+        return (WIDE, UNIT) if self.face.design == 'World row' else (UNIT, UNIT)
 
     def resizeEvent(self, event):
-        if hasattr(self, 'menu_button'):
-            self.menu_button.move(self.width()-34, 7)
         if self.kind == 'Photo' and hasattr(self, 'choose_button'):
             self.load_photo()
 
     def apply_theme(self):
         theme = self.config.get('theme') or self.notch.store.settings['desktop_theme']
-        self.colors = PALETTES.get(theme, PALETTES['Glass'])
+        self.theme_name = theme if theme in PALETTES else 'macOS'
+        self.colors = PALETTES[self.theme_name]
         _, foreground, muted, _ = self.colors
         if hasattr(self, 'info'):
             self.info.ink, self.info.muted = foreground, muted
@@ -166,13 +153,15 @@ class DesktopTile(QWidget):
         self.setStyleSheet('''QWidget { color: %s; background: transparent; }
             QPushButton { border: 0; border-radius: 7px; padding: 2px; }
             QPushButton:hover { background: rgba(128,128,128,35); }
-            QLineEdit, QTextEdit { background: transparent; border: 0; border-radius: 10px; padding: 6px; }
-            QLineEdit:focus, QTextEdit:focus { background: rgba(128,128,128,14); }
+            QLineEdit, QTextEdit { background: rgba(128,128,128,34); border: 0; border-radius: 11px; padding: 6px 9px; }
+            QLineEdit:focus, QTextEdit:focus { background: rgba(128,128,128,52); }
             QCheckBox { spacing: 6px; padding: 3px; }
             QScrollArea { border: 0; }
             QMenu { background: #25252c; color: white; }
             QMenu::item:selected { background: #494454; }''' % foreground)
         self.heading.setStyleSheet('color: %s; font-size: 11px; font-weight: 600;' % muted)
+        if hasattr(self, 'note'):
+            self.note.setStyleSheet('background: transparent; padding: 0;')
         self.update()
 
     def paintEvent(self, event):
@@ -180,18 +169,22 @@ class DesktopTile(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         background, _, _, alpha = self.colors
         if self.kind == 'Clock' and self.face.design == 'Numeral':
-            background, alpha = '#fafaf7', 255
+            return  # The numeral face is itself the tile.
         if self.kind == 'Weather':
             background, alpha = '#28568a', 255
         color = QColor(background)
         color.setAlpha(alpha)
-        gradient = QLinearGradient(0, 0, self.width()*.6, self.height())
-        gradient.setColorAt(0, color.lighter(103))
-        gradient.setColorAt(1, color)
-        painter.setBrush(gradient)
-        painter.setPen(QPen(QColor(255, 255, 255, 48), .6))
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 26, 26)
-        if self.kind == 'Note':
+        if self.theme_name == 'macOS':
+            painter.setBrush(color)
+            painter.setPen(QPen(QColor(255, 255, 255, 30), 1))
+        else:
+            gradient = QLinearGradient(0, 0, self.width()*.6, self.height())
+            gradient.setColorAt(0, color.lighter(103))
+            gradient.setColorAt(1, color)
+            painter.setBrush(gradient)
+            painter.setPen(QPen(QColor(255, 255, 255, 48), .6))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), RADIUS, RADIUS)
+        if self.kind == 'Note' and self.theme_name != 'macOS':
             painter.setPen(QPen(QColor(128, 128, 128, 50), 1))
             for y in range(47, self.height()-18, 25):
                 painter.drawLine(20, y, self.width()-20, y)
@@ -225,6 +218,9 @@ class DesktopTile(QWidget):
         menu = QMenu(self)
         if self.kind == 'Photo':
             menu.addAction('Change photo', self.choose_photo)
+        if self.kind == 'Weather':
+            fahrenheit = self.notch.store.settings.get('fahrenheit', False)
+            menu.addAction('Show °C' if fahrenheit else 'Show °F', lambda: self.notch.set_weather_unit(not fahrenheit))
         if self.kind == 'Clock':
             faces = menu.addMenu('Clock face')
             for design in DESIGNS:
@@ -241,7 +237,7 @@ class DesktopTile(QWidget):
     def set_design(self, design):
         self.config['design'] = design
         self.face.design = design
-        self.resize(440, 180) if design == 'World row' else self.resize(220, 220)
+        self.resize(*self.clock_size())
         self.face.update()
         self.notch.store.save()
 
@@ -260,7 +256,13 @@ class DesktopTile(QWidget):
             upcoming = [r['title'] for r in sorted(deadlines, key=lambda r:r['due']) if r['due'][:10] >= now.strftime('%Y-%m-%d')]
             events = self.notch.widget_data.get('Google Calendar', [])
             titles = [r[0] for r in events[:3]] if isinstance(events, list) else []
-            self.info.data = {'today': today[0] if today else 'No events today', 'events': (titles+upcoming)[:4]}
+            following = [r for r in sorted(deadlines, key=lambda r: r['due']) if r['due'][:10] > now.strftime('%Y-%m-%d')]
+            try:
+                next_day = datetime.strptime(following[0]['due'][:10], '%Y-%m-%d') if following else now + timedelta(days=1)
+            except ValueError:
+                next_day = now + timedelta(days=1)
+            self.info.data = {'today': today[0] if today else 'No Events Today', 'events': (titles+upcoming)[:3],
+                              'next': next_day.strftime('%A, %d %b').upper()}
             self.info.update()
         elif self.kind == 'Weather':
             self.info.data = self.notch.widget_data.get('Weather', {})
@@ -339,7 +341,7 @@ class DesktopTile(QWidget):
         if pixmap.isNull():
             self.photo.setText('A little inspiration.\nChoose a photo from your PC.')
         else:
-            size = self.size()-QSize(32, 32)
+            size = self.size()
             scaled = pixmap.scaled(size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             cropped = scaled.copy((scaled.width()-size.width())//2, (scaled.height()-size.height())//2, size.width(), size.height())
             rounded = QPixmap(size)
@@ -347,7 +349,7 @@ class DesktopTile(QWidget):
             painter = QPainter(rounded)
             painter.setRenderHint(QPainter.Antialiasing)
             clip = QPainterPath()
-            clip.addRoundedRect(QRectF(rounded.rect()), 18, 18)
+            clip.addRoundedRect(QRectF(rounded.rect()), RADIUS, RADIUS)
             painter.setClipPath(clip)
             painter.drawPixmap(0, 0, cropped)
             painter.end()
@@ -389,7 +391,7 @@ class DesktopManager:
         bounds = QApplication.primaryScreen().availableGeometry()
         offset = len(self.windows) % 5 * 28
         self.notch.store.settings['desktop_widgets'].append({'id': uuid.uuid4().hex, 'kind': kind,
-            'x': bounds.x() + 24 + offset if x is None else x,
+            'x': bounds.x() + GAP + offset if x is None else x,
             'y': bounds.y() + 80 + offset if y is None else y, 'design': design or 'Numeral', 'theme': theme})
         self.notch.store.save()
         self.sync()
@@ -398,13 +400,14 @@ class DesktopManager:
 
     def add_layout(self, name):
         bounds = QApplication.primaryScreen().availableGeometry()
-        left, top, right = bounds.left()+24, bounds.top()+80, bounds.right()-280
-        layouts = {'Reference desk': [('Battery', left, top), ('Clock', left+236, top), ('Weather', left+472, top), ('Calendar', left, top+236)],
-                   'Focus desk': [('Clock', left, top), ('To do', left, top+236), ('Note', right, top)],
-                   'Music desk': [('Music', left, top), ('Clock', right, top), ('Weather', right, top+236)],
-                   'Daily desk': [('Clock', left, top), ('Calendar', left, top+236), ('To do', right, top)]}
+        left, top, right = bounds.left()+GAP, bounds.top()+80, bounds.right()-UNIT-GAP
+        step = UNIT+GAP
+        layouts = {'Reference desk': [('Battery', left, top), ('Clock', left+step, top), ('Weather', left+2*step, top), ('Calendar', left, top+step)],
+                   'Focus desk': [('Clock', left, top), ('To do', left, top+step), ('Note', right, top)],
+                   'Music desk': [('Music', left, top), ('Clock', right, top), ('Weather', right, top+step)],
+                   'Daily desk': [('Clock', left, top), ('Calendar', left, top+step), ('To do', right, top)]}
         for kind, x, y in layouts[name]:
-            self.add(kind, x, y, theme='Graphite' if name == 'Reference desk' else None)
+            self.add(kind, x, y)
 
     def remove(self, identity):
         self.notch.store.settings['desktop_widgets'] = [r for r in self.notch.store.settings['desktop_widgets'] if r['id'] != identity]

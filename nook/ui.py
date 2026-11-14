@@ -305,7 +305,7 @@ class Settings(QWidget):
         layout.addWidget(label('Give your desktop a little purpose', 'section'))
         layout.addWidget(label('Tiles sit behind normal app windows. Drag a tile by its empty space. Hover to reveal its ··· menu for style, position and removal.', 'muted', True))
         form = QFormLayout()
-        theme = self.field(form, 'desktop_theme', 'Default tile style', 'combo', choices=['Glass', 'Paper', 'Midnight', 'Graphite'])
+        theme = self.field(form, 'desktop_theme', 'Default tile style', 'combo', choices=['macOS', 'Glass', 'Paper', 'Midnight', 'Graphite'])
         self.form_card(layout, form)
         row = QHBoxLayout()
         self.desktop_kind = QComboBox()
@@ -323,7 +323,7 @@ class Settings(QWidget):
         layout.addLayout(gallery)
         for name in ('Reference desk', 'Focus desk', 'Music desk', 'Daily desk'):
             layout.addWidget(button('Add ' + name, lambda checked=False, n=name: self.add_desktop_layout(n)))
-        layout.addWidget(label('Glass is translucent, Paper is soft and light, Midnight is dark. Layouts add three tiles without removing your existing ones.', 'muted', True))
+        layout.addWidget(label('macOS is dark and translucent like Mac widgets, Glass is translucent, Paper is soft and light, Midnight is dark. Layouts add three tiles without removing your existing ones.', 'muted', True))
         self.desktop_list = QListWidget()
         layout.addWidget(self.desktop_list)
         layout.addWidget(button('Remove selected widget', self.remove_desktop))

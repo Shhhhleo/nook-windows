@@ -23,7 +23,7 @@ class ClockFace(QWidget):
         painter.scale(rect.width()/200, rect.height()/200)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor('#333437' if dark else '#fafaf7'))
-        painter.drawRoundedRect(QRectF(-100, -100, 200, 200), 32 if digital else 100, 32 if digital else 100)
+        painter.drawRoundedRect(QRectF(-100, -100, 200, 200), 24 if digital else 100, 24 if digital else 100)
         ink = QColor('#ececea' if dark else '#171719')
         for index in range(60):
             if bold and index % 5:
