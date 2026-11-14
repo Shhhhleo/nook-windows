@@ -890,9 +890,12 @@ class Notch(QWidget):
                 self.widget_labels[name] = label('Connect in Settings to see your ' + ('events.' if name == 'Google Calendar' else 'pages.'), 'muted', True)
                 layout.addWidget(self.widget_labels[name])
             elif name in ('Claude usage', 'Codex usage'):
-                layout.addWidget(label('Live subscription limits are not connected.', 'muted'))
+                layout.addWidget(label('Notch cannot read this account’s private plan allowance. Use the official usage page for the current value and reset time.', 'muted', True))
                 url = 'https://claude.ai/settings/usage' if name == 'Claude usage' else 'https://chatgpt.com/codex/settings/usage'
-                layout.addWidget(button('Open usage page', lambda checked=False, u=url: open_url(u)))
+                title = 'Claude' if name == 'Claude usage' else 'Codex'
+                layout.addWidget(button('Open ' + title + ' usage', lambda checked=False, u=url: open_url(u)))
+                if name == 'Codex usage':
+                    layout.addWidget(label('Workspace administrators may use the Codex Compliance API. Personal plans show usage in Codex / ChatGPT settings.', 'muted', True))
             elif name == 'Calls':
                 layout.addWidget(label('Open a call app. Call status and in-call controls are not connected.', 'muted', True))
                 row = QHBoxLayout()

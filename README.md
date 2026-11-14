@@ -36,7 +36,7 @@ Local tools work without loading AI:
 - `make a file inventory` prepares a CSV for review.
 - `look up solar energy` searches Wikipedia with sources; a button opens wider browser search.
 
-The model can summarise a text file (`summarise notes.txt`) and propose new TXT, Markdown or CSV documents. File previews are bounded to 250 KB and text types; paths and symlinks outside the chosen folder are rejected. Creation requires reviewing the proposal; existing files are never overwritten. It cannot run arbitrary commands, code, or control other apps. This is a focused cowork assistant, not general desktop automation.
+The model can summarise a text file (`summarise notes.txt`) and propose new TXT, Markdown or CSV documents. Snippy also understands natural requests such as `search for my report`, `read the file called notes.txt`, `add task buy milk`, or `mark buy milk done`. File previews are bounded to 250 KB and text types; paths and symlinks outside the chosen search folder are rejected. Creation requires reviewing the proposal; existing files are never overwritten. It cannot run arbitrary commands, code, or control other apps.
 
 Ollama 0.40.16 and **qwen3:1.7b** are bundled. No separate Ollama installation is required. A private service binds to 127.0.0.1:11435. Opening the typing bar preloads the model; normal replies stream as they are generated. Conversation and tool selection use different prompts to reduce spurious tool calls and repetition. After one idle minute, Snippy sleeps and stops its owned AI service to release memory. The first request after sleep may still need a cold load. Small local models can still make factual mistakes; use sources for important or current facts.
 
@@ -66,7 +66,7 @@ References: [Microsoft notification listener](https://learn.microsoft.com/en-us/
 | MCP apps | Optional Notion and custom Streamable HTTP apps, OAuth/token connection, tool discovery and reviewed calls. |
 | Google Calendar | Browser sign-in with OAuth PKCE and loopback callback, primary calendar upcoming events. Requires a Google Desktop OAuth client and enabled Calendar API. |
 | Stocks | Up to eight user-chosen Finnhub symbols, quote timestamps, user-supplied API key. Availability and delays depend on the provider. |
-| Claude / Codex usage | Account usage page shortcuts. Live subscription limit telemetry is pending. |
+| Claude / Codex usage | Opens the official usage page. Notch does not read personal-plan allowance values. OpenAI documents Codex Compliance API usage for eligible workspaces; personal-plan usage is shown in ChatGPT/Codex settings. |
 | Running tasks | Local Claude, Codex, ChatGPT and terminal process presence. Agent task status/completion is pending. |
 | Calls | WhatsApp, Zoom and Instagram launch links. Live call state, mute and hang-up integration is pending. |
 | Academia | Opens the account dashboard in the user's browser and imports local deadline JSON. Authenticated automatic sync is pending a supported Academia API. |

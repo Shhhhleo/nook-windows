@@ -167,6 +167,10 @@ class AssistantPanel(QWidget):
         history = list(self.history)
         settings = dict(self.notch.store.settings)
         def done(result):
+            if result.get('tasks_changed') is True:
+                self.notch.store.save()
+                self.notch.build_todos()
+                self.notch.desktop.refresh()
             self.history.extend([{'role': 'user', 'content': prompt},
                                  {'role': 'assistant', 'content': result['text']}])
             self.history = self.history[-200:]

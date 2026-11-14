@@ -95,4 +95,10 @@ Before publication: update this file with final changes/tests/remaining issues, 
 
 Final build updated the existing distribution after the user confirmed they had quit the app. Executable hashes match staging; offline speech models and native DLLs are packaged. Eight-second offscreen startup passed with no logged exceptions; 82.4 MiB working set / 45.2 MiB private memory before loading AI/speech. Distribution 3.67 GiB. Latest complete test run: 30 passed in 6.398 seconds. Build now checks locked destination files before replacement; `-SkipBuild` can finish copying a previously built artifact after closing the app. Never use it if source changed after the staged build.
 
-Five-hour allowance at the last mid-build reading: 71% used, 29% remaining. Push condition was not met. Recheck before publication; never treat this snapshot as current indefinitely. No autonomous monitoring persists after the turn ends.
+Five-hour allowance at the last mid-build reading: 71% used, 29% remaining. Push condition was not met at that snapshot. Recheck before publication; never treat this snapshot as current indefinitely. No autonomous monitoring persists after the turn ends.
+
+## Follow-up gap raised by the user
+
+The account cards previously only opened external usage pages. Current first-party guidance documents the Codex Compliance API for eligible workspaces; personal allowances remain in ChatGPT/Codex settings. Notch now labels the private account value as unavailable and links to the official page. Claude personal usage likewise remains an official account-page link. No private app tokens or session files are read.
+
+Snippy now routes natural search/read/summarise requests to bounded tools inside the selected cowork folder, resolves a uniquely named file even without its extension, and deterministic add/list/complete to-do requests update both widgets immediately. File creation still requires review. The user-selected folder can be changed in Settings → Behaviour. These latest source changes still need a new package build before they appear in `dist/Snippy/Nook/Nook.exe`.
