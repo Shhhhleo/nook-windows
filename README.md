@@ -31,7 +31,8 @@ Music and tasks share data with the notch. Weather uses a configured city or Win
 | Weather | Windows location or city selection, Open-Meteo forecasts, on-widget Celsius/Fahrenheit controls. Windows location permission is required; no direct Windows Weather forecast API is used. |
 | Google Calendar | Browser sign-in with OAuth PKCE and loopback callback, primary calendar upcoming events. Requires a Google Desktop OAuth client and enabled Calendar API. |
 | Stocks | Up to eight user-chosen Finnhub symbols, quote timestamps, user-supplied API key. Availability and delays depend on the provider. |
-| Claude / Codex usage | Opens the official usage page. Notch does not read personal-plan allowance values. OpenAI documents Codex Compliance API usage for eligible workspaces; personal-plan usage is shown in ChatGPT/Codex settings. |
+| Claude usage | Live session and weekly plan limits with reset times, refreshed every minute or on click. Uses the Claude Code sign-in in `~/.claude/.credentials.json` and refreshes its token when expired. Also a desktop tile (orange rings). |
+| Codex usage | Opens the official usage page. OpenAI documents Codex Compliance API usage for eligible workspaces; personal-plan usage is shown in ChatGPT/Codex settings. |
 | Running tasks | Local Claude, Codex, ChatGPT and terminal process presence. Agent task status/completion is pending. |
 | Calls | WhatsApp, Zoom and Instagram launch links. Live call state, mute and hang-up integration is pending. |
 | Academia | Opens the account dashboard in the user's browser and imports local deadline JSON. Authenticated automatic sync is pending a supported Academia API. |

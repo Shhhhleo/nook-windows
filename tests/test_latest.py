@@ -44,3 +44,22 @@ class SurfaceTests(unittest.TestCase):
                 if getattr(notch,'settings_window',None): notch.settings_window.close()
                 for window in notch.desktop.windows.values(): window.close()
                 notch.tray.hide(); notch.close(); notch.deleteLater(); app.processEvents()
+
+
+class ClaudeUsageTests(unittest.TestCase):
+    def test_expired_token_is_refreshed_written_back_and_limits_parsed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / '.credentials.json'
+            path.write_text(json.dumps({'other': 1, 'claudeAiOauth': {'accessToken': 'old', 'refreshToken': 'r1', 'expiresAt': 0}}))
+            replies = [{'access_token': 'new', 'refresh_token': 'r2', 'expires_in': 3600},
+                       {'five_hour': {'utilization': 42.0, 'resets_at': '2026-11-15T11:00:00+00:00'}, 'seven_day': {'utilization': 65, 'resets_at': None}, 'seven_day_opus': None}]
+            with patch.object(services, 'request', side_effect=replies) as call:
+                limits = services.claude_usage(path)
+            self.assertEqual(limits, [('Session', 42.0, '2026-11-15T11:00:00+00:00'), ('Week', 65.0, None)])
+            self.assertEqual(call.call_args.kwargs['headers']['Authorization'], 'Bearer new')
+            saved = json.loads(path.read_text())
+            self.assertEqual((saved['other'], saved['claudeAiOauth']['refreshToken']), (1, 'r2'))
+
+    def test_missing_sign_in_explains_itself(self):
+        with self.assertRaisesRegex(RuntimeError, 'Sign in'):
+            services.claude_usage(Path(tempfile.gettempdir()) / 'no-such-credentials.json')

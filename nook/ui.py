@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QFont, QPixmap, QIcon,
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QScrollArea, QFrame, QStackedWidget, QListWidget, QListWidgetItem, QCheckBox,
     QSpinBox, QComboBox, QFormLayout, QFileDialog, QColorDialog, QFontComboBox,
-    QSystemTrayIcon, QMenu, QMessageBox, QAbstractItemView, QGridLayout, QSlider, QLayout)
+    QSystemTrayIcon, QMenu, QMessageBox, QAbstractItemView, QGridLayout, QSlider, QLayout, QProgressBar)
 from .visuals import media_icon, AlbumArt, TrackLabel, WeekStrip, TemplatePreview
 from . import services
 from .storage import WIDGETS
@@ -370,7 +370,7 @@ class Settings(QWidget):
         row.addWidget(button('Import deadlines', self.import_deadlines))
         layout.addLayout(row)
         layout.addWidget(label('Usage limits and calls', 'section'))
-        layout.addWidget(label('Claude and Codex provide shortcuts to their account usage pages. Subscription limit telemetry is not connected. Calls open WhatsApp, Zoom or Instagram; in-call controls require provider support.', 'muted', True))
+        layout.addWidget(label('Claude usage reads live plan limits through the Claude Code sign-in on this PC (run \"claude\" once to sign in). Codex opens its usage page. Calls open WhatsApp, Zoom or Instagram; in-call controls require provider support.', 'muted', True))
         layout.addStretch()
 
     def general_page(self):
@@ -532,6 +532,9 @@ class Notch(QWidget):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.refresh_widgets)
         self.refresh_timer.start(300000)
+        self.claude_timer = QTimer(self)
+        self.claude_timer.timeout.connect(self.refresh_claude_usage)
+        self.claude_timer.start(60000)
         self.task_timer = QTimer(self)
         self.task_timer.timeout.connect(self.refresh_tasks)
         self.task_timer.start(15000)
@@ -780,13 +783,20 @@ class Notch(QWidget):
                 self.link_layouts[name] = layout
                 self.widget_labels[name] = label('Connect in Settings to see your ' + ('events.' if name == 'Google Calendar' else 'pages.'), 'muted', True)
                 layout.addWidget(self.widget_labels[name])
-            elif name in ('Claude usage', 'Codex usage'):
+            elif name == 'Claude usage':
+                self.claude_bar = QProgressBar()
+                self.claude_bar.setRange(0, 100)
+                self.claude_bar.setTextVisible(False)
+                self.claude_bar.setFixedHeight(8)
+                self.claude_bar.setAccessibleName('Claude session usage')
+                self.claude_bar.setStyleSheet('QProgressBar { background: #3a3a3e; border: 0; border-radius: 4px; } QProgressBar::chunk { background: #d97757; border-radius: 4px; }')
+                layout.addWidget(self.claude_bar)
+                self.widget_labels[name] = label('Loading Claude usage…', 'muted', True)
+                layout.addWidget(self.widget_labels[name])
+            elif name == 'Codex usage':
                 layout.addWidget(label('Notch cannot read this account’s private plan allowance. Use the official usage page for the current value and reset time.', 'muted', True))
-                url = 'https://claude.ai/settings/usage' if name == 'Claude usage' else 'https://chatgpt.com/codex/settings/usage'
-                title = 'Claude' if name == 'Claude usage' else 'Codex'
-                layout.addWidget(button('Open ' + title + ' usage', lambda checked=False, u=url: open_url(u)))
-                if name == 'Codex usage':
-                    layout.addWidget(label('Workspace administrators may use the Codex Compliance API. Personal plans show usage in Codex / ChatGPT settings.', 'muted', True))
+                layout.addWidget(button('Open Codex usage', lambda checked=False: open_url('https://chatgpt.com/codex/settings/usage')))
+                layout.addWidget(label('Workspace administrators may use the Codex Compliance API. Personal plans show usage in Codex / ChatGPT settings.', 'muted', True))
             elif name == 'Calls':
                 layout.addWidget(label('Open a call app. Call status and in-call controls are not connected.', 'muted', True))
                 row = QHBoxLayout()
@@ -1095,18 +1105,25 @@ class Notch(QWidget):
                 QTimer.singleShot(0, self.refresh_media)
         self.run_job('media', lambda: services.media(action, self.preferred_player), done, failed)
 
-    def refresh_widgets(self):
+    def refresh_claude_usage(self):
+        self.refresh_widgets('Claude usage')
+
+    def refresh_widgets(self, only=None):
         s = self.store.settings
         jobs = {}
+        if services.CLAUDE_CREDENTIALS.exists():
+            jobs['Claude usage'] = services.claude_usage
         if s['city'] or s.get('weather_source') == 'Windows location':
             jobs['Weather'] = lambda: services.weather(s['city'], s['fahrenheit'], s.get('weather_source') == 'Windows location', structured=True)
         if self.store.secret('finnhub_token'):
             jobs['Stocks'] = lambda: services.stocks(s['symbols'], self.store.secret('finnhub_token'))
         if self.store.secret('google_tokens'):
             jobs['Google Calendar'] = lambda: services.calendar(self.store)
+        if only:
+            jobs = {only: jobs[only]} if only in jobs else {}
         generation = self.generation
         for name, work in jobs.items():
-            desktop_names = {'Weather' if r['kind'] == 'Weather' else 'Google Calendar' if r['kind'] == 'Calendar' else '' for r in s['desktop_widgets']}
+            desktop_names = {'Google Calendar' if r['kind'] == 'Calendar' else r['kind'] for r in s['desktop_widgets']}
             if name not in s['enabled'] and name not in desktop_names:
                 continue
             def done(value, name=name):
@@ -1115,7 +1132,10 @@ class Notch(QWidget):
                     return
                 if name not in self.widget_labels:
                     return
-                if name in self.link_layouts:
+                if name == 'Claude usage':
+                    self.claude_bar.setValue(int(min(value[0][1], 100)) if value else 0)
+                    self.widget_labels[name].setText('   '.join('%s %.0f%% · resets %s' % (n, pct, services.format_reset(r)) for n, pct, r in value) or 'No usage limits reported.')
+                elif name in self.link_layouts:
                     layout = self.link_layouts[name]
                     while layout.count() > 2:
                         item = layout.takeAt(2)
@@ -1134,7 +1154,8 @@ class Notch(QWidget):
                 if generation == self.generation and name in self.widget_labels:
                     self.widget_labels[name].setText(message)
             self.run_job(name, work, done, failed)
-        self.refresh_tasks()
+        if not only:
+            self.refresh_tasks()
 
     def set_weather_unit(self, fahrenheit):
         self.store.settings['fahrenheit'] = fahrenheit

@@ -279,3 +279,38 @@ def calendar(store):
     response = request('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + query,
                        headers={'Authorization': 'Bearer ' + tokens['access_token']})
     return [(e.get('summary', 'Untitled event') + '\n' + e['start'].get('dateTime', e['start'].get('date', '')), e.get('htmlLink', '')) for e in response.get('items', [])]
+
+
+CLAUDE_CREDENTIALS = Path.home() / '.claude' / '.credentials.json'
+CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'   # Claude Code's public OAuth client
+CLAUDE_LIMITS = [('five_hour', 'Session'), ('seven_day', 'Week'), ('seven_day_opus', 'Opus'), ('seven_day_sonnet', 'Sonnet')]
+
+
+def claude_usage(path=CLAUDE_CREDENTIALS):
+    """Plan usage from the Claude Code sign-in on this PC. Returns [(label, percent, resets_at)]."""
+    if not path.exists():
+        raise RuntimeError('Sign in to Claude Code (run "claude") to show usage.')
+    store = json.loads(path.read_text(encoding='utf-8'))
+    auth = store.get('claudeAiOauth') or {}
+    if not auth.get('accessToken'):
+        raise RuntimeError('Sign in to Claude Code (run "claude") to show usage.')
+    if auth.get('expiresAt', 0) / 1000 < time.time() + 60:
+        # Refresh tokens rotate, so the new pair must be written back or Claude Code would be signed out.
+        fresh = request('https://console.anthropic.com/v1/oauth/token',
+                        {'grant_type': 'refresh_token', 'refresh_token': auth['refreshToken'], 'client_id': CLAUDE_CLIENT_ID})
+        auth.update(accessToken=fresh['access_token'], refreshToken=fresh.get('refresh_token', auth['refreshToken']),
+                    expiresAt=int((time.time() + fresh['expires_in']) * 1000))
+        temp = path.with_suffix('.tmp')
+        temp.write_text(json.dumps(store), encoding='utf-8')
+        os.replace(temp, path)
+    data = request('https://api.anthropic.com/api/oauth/usage',
+                   headers={'Authorization': 'Bearer ' + auth['accessToken'], 'anthropic-beta': 'oauth-2025-04-20'})
+    return [(label, float(data[key].get('utilization') or 0), data[key].get('resets_at'))
+            for key, label in CLAUDE_LIMITS if isinstance(data.get(key), dict)]
+
+
+def format_reset(resets_at):
+    if not resets_at:
+        return ''
+    when = datetime.fromisoformat(resets_at.replace('Z', '+00:00')).astimezone()
+    return when.strftime('%H:%M' if when.date() == datetime.now().date() else '%a %H:%M')

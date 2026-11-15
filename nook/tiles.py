@@ -83,3 +83,27 @@ class InfoFace(QWidget):
                     else:
                         text(x+14,y+60,60,18,'AC',8,self.muted)
             self.setToolTip('PC battery' if self.battery else 'No battery reported by Windows. Empty rings are unconnected devices.')
+        elif self.kind == 'Claude usage':
+            from .services import format_reset
+            limits = self.data if isinstance(self.data, list) else []
+            if not limits:
+                text(20,70,182,30,'Claude usage',16)
+                text(20,104,182,60,self.data if isinstance(self.data, str) else 'Loading…',9,self.muted)
+            for i in range(4):
+                x,y = 15+(i%2)*104, 15+(i//2)*104
+                p.setBrush(Qt.NoBrush); p.setPen(QPen(QColor('#3a3a3e'),8,Qt.SolidLine,Qt.RoundCap))
+                if i >= len(limits):
+                    if i == len(limits) == 2:
+                        text(20,140,182,28,'Claude usage',14)
+                        text(20,168,182,20,'Click to refresh',9,self.muted)
+                    continue
+                p.drawEllipse(QRectF(x,y,88,88))
+                name, percent, resets = limits[i]
+                p.setPen(QPen(QColor('#d97757'),8,Qt.SolidLine,Qt.RoundCap))
+                p.drawArc(QRectF(x,y,88,88),90*16,-int(min(percent,100)*3.6*16))
+                p.setPen(QColor(self.ink)); p.setFont(QFont('Segoe UI', 13, QFont.DemiBold))
+                p.drawText(QRectF(x,y+22,88,24), Qt.AlignCenter, f'{percent:.0f}%')
+                p.setPen(QColor(self.muted)); p.setFont(QFont('Segoe UI', 7))
+                p.drawText(QRectF(x,y+46,88,14), Qt.AlignCenter, name)
+                p.drawText(QRectF(x,y+59,88,14), Qt.AlignCenter, format_reset(resets))
+            self.setToolTip('Claude plan usage · ring time is the reset · click to refresh')

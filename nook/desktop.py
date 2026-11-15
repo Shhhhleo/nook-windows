@@ -13,7 +13,7 @@ from .presets import THEMES
 from .clocks import ClockFace, DESIGNS
 from .tiles import InfoFace
 
-KINDS = ('Clock', 'Music', 'To do', 'Weather', 'Calendar', 'Note', 'Photo', 'Battery')
+KINDS = ('Clock', 'Music', 'To do', 'Weather', 'Calendar', 'Note', 'Photo', 'Battery', 'Claude usage')
 UNIT, WIDE, GAP, RADIUS = 222, 468, 24, 22   # macOS widget grid: small tile, double-wide tile, gap, corner radius
 SIZES = {kind: (UNIT, UNIT) for kind in KINDS}
 SIZES['Calendar'] = (WIDE, UNIT)
@@ -112,7 +112,7 @@ class DesktopTile(QWidget):
             self.content.addWidget(self.choose_button)
             root.setContentsMargins(0, 0, 0, 0)
             self.load_photo()
-        elif self.kind in ('Weather', 'Calendar', 'Battery'):
+        elif self.kind in ('Weather', 'Calendar', 'Battery', 'Claude usage'):
             self.info = InfoFace(self.kind)
             self.content.addWidget(self.info, 1)
             root.setContentsMargins(0, 0, 0, 0)
@@ -210,6 +210,8 @@ class DesktopTile(QWidget):
 
     def mouseReleaseEvent(self, event):
         if self.drag_offset is not None:
+            if self.kind == 'Claude usage' and self.drag_offset == event.globalPosition().toPoint() - self.pos():
+                self.notch.refresh_claude_usage()   # a click without a drag fetches fresh numbers
             self.drag_offset = None
             self.config.update(x=self.x(), y=self.y())
             self.notch.store.save()
@@ -218,6 +220,8 @@ class DesktopTile(QWidget):
         menu = QMenu(self)
         if self.kind == 'Photo':
             menu.addAction('Change photo', self.choose_photo)
+        if self.kind == 'Claude usage':
+            menu.addAction('Refresh now', self.notch.refresh_claude_usage)
         if self.kind == 'Weather':
             fahrenheit = self.notch.store.settings.get('fahrenheit', False)
             menu.addAction('Show °C' if fahrenheit else 'Show °F', lambda: self.notch.set_weather_unit(not fahrenheit))
@@ -269,6 +273,9 @@ class DesktopTile(QWidget):
             self.info.update()
         elif self.kind == 'Battery':
             self.info.refresh_battery()
+            self.info.update()
+        elif self.kind == 'Claude usage':
+            self.info.data = self.notch.widget_data.get('Claude usage', 'Loading…')
             self.info.update()
         elif self.kind == 'Music':
             state = self.notch.media_state
